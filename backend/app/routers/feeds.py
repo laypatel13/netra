@@ -26,19 +26,44 @@ BACKOFF_INITIAL_MS = 2000
 BACKOFF_MAX_MS = 30000
 BACKOFF_MULTIPLIER = 2.0
 
-# --- In-memory catalogue cache ---
+import json
+import os
+import tempfile
+
+# --- In-memory & Disk catalogue cache ---
 _catalogue_cache: dict[str, dict] = {}  # keyed by host
-_cache_ttl_seconds = 30
+_cache_ttl_seconds = 60
+
+def _get_disk_cache_path(host: str) -> str:
+    safe_host = host.replace(":", "_").replace("/", "_")
+    # Store in backend/data/ instead of a random temp directory
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, f"catalogue_{safe_host}.json")
 
 
 def _fetch_catalogue(host: str) -> list[dict]:
     """
     Fetch and cache the camera catalogue from an upstream /api/ingest endpoint.
-    Cache is per-host with a 30s TTL to avoid hammering the upstream on every
-    page load.
+    Cache is per-host with a TTL to avoid hammering the upstream on every
+    page load. Implements stale-while-revalidate for transient failures, backed
+    by a disk cache to survive server restarts.
     """
     now = time.time()
+    disk_path = _get_disk_cache_path(host)
+    
+    # Check memory cache first
     cached = _catalogue_cache.get(host)
+    
+    # If not in memory, try to load from disk
+    if not cached and os.path.exists(disk_path):
+        try:
+            with open(disk_path, "r") as f:
+                cached = json.load(f)
+                _catalogue_cache[host] = cached
+        except Exception as e:
+            logger.warning(f"Failed to read disk cache for {host}: {e}")
+
     if cached and now - cached["ts"] < _cache_ttl_seconds:
         return cached["data"]
 
@@ -50,11 +75,24 @@ def _fetch_catalogue(host: str) -> list[dict]:
             resp.raise_for_status()
             data = resp.json()
             cameras = data if isinstance(data, list) else data.get("cameras", [])
-            _catalogue_cache[host] = {"ts": now, "data": cameras}
+            cache_entry = {"ts": now, "data": cameras}
+            _catalogue_cache[host] = cache_entry
+            
+            # Save to disk
+            try:
+                with open(disk_path, "w") as f:
+                    json.dump(cache_entry, f)
+            except Exception as e:
+                logger.warning(f"Failed to write disk cache for {host}: {e}")
+                
             logger.info("Fetched %d cameras from %s", len(cameras), url)
             return cameras
         except requests.RequestException:
             continue
+
+    if cached:
+        logger.warning(f"Could not reach {host} (transient failure), serving stale cache")
+        return cached["data"]
 
     raise HTTPException(
         status_code=502,
