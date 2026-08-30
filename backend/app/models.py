@@ -93,3 +93,22 @@ class WatchlistEntry(Base):
     category = Column(Enum(WatchlistCategory), nullable=False)
     source = Column(String, default="representative-dataset")
     date_added = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    """
+    Day 2 — basic audit trail for registry actions. Supports the "enhanced
+    cybersecurity/RBAC/auditability" bonus-consideration item in plan.md
+    Section 11. `actor` comes from the (unauthenticated) X-Actor header —
+    this is a demonstration of the trail existing, not real accountability
+    until it sits behind real auth.
+    """
+    __tablename__ = "audit_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor = Column(String, nullable=False)
+    action = Column(String, nullable=False)  # e.g. "camera.onboard", "camera.status_sync"
+    target_type = Column(String, nullable=True)
+    target_id = Column(String, nullable=True)
+    details = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

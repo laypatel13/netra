@@ -87,3 +87,18 @@ class WatchlistRead(BaseModel):
 class WatchlistMatch(BaseModel):
     matched: bool
     entry: Optional[WatchlistRead] = None
+
+
+# ---- Audit log ----
+
+class AuditLogRead(BaseModel):
+    id: UUID
+    actor: str
+    action: str
+    target_type: Optional[str]
+    target_id: Optional[str]
+    details: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
-from app.routers import cameras, detections, watchlist
+from app.routers import cameras, detections, watchlist, audit
 
 # Dev convenience only — swap for Alembic migrations before anything resembling production.
 Base.metadata.create_all(bind=engine)
@@ -29,6 +29,7 @@ app.add_middleware(
 app.include_router(cameras.router)
 app.include_router(detections.router)
 app.include_router(watchlist.router)
+app.include_router(audit.router)
 
 
 @app.get("/")
