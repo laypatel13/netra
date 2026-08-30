@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import Dashboard from "./pages/Dashboard.jsx";
 import Registry from "./pages/Registry.jsx";
 import LiveViewer from "./pages/LiveViewer.jsx";
+import GapAnalysis from "./pages/GapAnalysis.jsx";
 
 const linkStyle = ({ isActive }) => ({
   marginRight: 16,
@@ -27,6 +28,9 @@ export default function App() {
           <NavLink to="/live" style={linkStyle}>
             Live Viewer (Model 2)
           </NavLink>
+          <NavLink to="/gap-analysis" style={linkStyle}>
+            Gap Analysis
+          </NavLink>
         </nav>
       </header>
 
@@ -34,7 +38,9 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/registry" element={<Registry />} />
         <Route path="/live" element={<LiveViewer />} />
+        <Route path="/gap-analysis" element={<GapAnalysis />} />
       </Routes>
     </div>
   );
 }
+

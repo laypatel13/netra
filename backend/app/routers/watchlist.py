@@ -19,7 +19,7 @@ router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 logger = logging.getLogger("netra.watchlist")
 
 
-@router.post("", response_model=schemas.WatchlistRead)
+@router.post("", response_model=schemas.WatchlistRead, summary="Add a vehicle to the watchlist")
 def add_watchlist_entry(entry: schemas.WatchlistCreate, db: Session = Depends(get_db)):
     if db.query(models.WatchlistEntry).filter_by(plate_number=entry.plate_number).first():
         raise HTTPException(status_code=409, detail="plate already on watchlist")
@@ -35,12 +35,12 @@ def add_watchlist_entry(entry: schemas.WatchlistCreate, db: Session = Depends(ge
     return db_entry
 
 
-@router.get("", response_model=List[schemas.WatchlistRead])
+@router.get("", response_model=List[schemas.WatchlistRead], summary="List all watchlist entries")
 def list_watchlist(db: Session = Depends(get_db)):
     return db.query(models.WatchlistEntry).all()
 
 
-@router.get("/check/{plate_number}", response_model=schemas.WatchlistMatch)
+@router.get("/check/{plate_number}", response_model=schemas.WatchlistMatch, summary="Check if a plate is on the watchlist")
 def check_plate(plate_number: str, db: Session = Depends(get_db)):
     return check_plate_against_watchlist(plate_number, db)
 

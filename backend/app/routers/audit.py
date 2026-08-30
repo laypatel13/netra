@@ -35,6 +35,6 @@ def log_action(
     db.commit()
 
 
-@router.get("", response_model=List[schemas.AuditLogRead])
+@router.get("", response_model=List[schemas.AuditLogRead], summary="List audit log entries (admin only)")
 def list_audit_log(db: Session = Depends(get_db), _role: str = Depends(require_admin)):
     return db.query(models.AuditLog).order_by(models.AuditLog.created_at.desc()).all()

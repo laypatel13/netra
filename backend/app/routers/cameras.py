@@ -23,7 +23,7 @@ from app.routers.audit import log_action
 router = APIRouter(prefix="/cameras", tags=["registry"])
 
 
-@router.post("", response_model=schemas.CameraRead)
+@router.post("", response_model=schemas.CameraRead, summary="Onboard a single camera")
 def onboard_camera(
     camera: schemas.CameraCreate,
     db: Session = Depends(get_db),
@@ -53,7 +53,7 @@ def onboard_camera(
     return db_camera
 
 
-@router.post("/bulk", response_model=List[schemas.CameraRead])
+@router.post("/bulk", response_model=List[schemas.CameraRead], summary="Bulk onboard cameras from JSON array")
 def onboard_cameras_bulk(
     cameras: List[schemas.CameraCreate],
     db: Session = Depends(get_db),
@@ -86,7 +86,7 @@ def onboard_cameras_bulk(
     return results
 
 
-@router.post("/bulk-csv", response_model=List[schemas.CameraRead])
+@router.post("/bulk-csv", response_model=List[schemas.CameraRead], summary="Bulk onboard cameras from CSV upload")
 async def onboard_cameras_csv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -152,7 +152,7 @@ async def onboard_cameras_csv(
     return results
 
 
-@router.post("/sync-status")
+@router.post("/sync-status", summary="Sync camera health status from upstream catalogue")
 def sync_camera_status(
     host: str,
     db: Session = Depends(get_db),
@@ -191,7 +191,7 @@ def sync_camera_status(
     return {"host": host, "cameras_checked": len(catalogue), "cameras_updated": updated}
 
 
-@router.get("", response_model=List[schemas.CameraRead])
+@router.get("", response_model=List[schemas.CameraRead], summary="List registered cameras with RBAC scoping")
 def list_cameras(
     department: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -213,7 +213,7 @@ def list_cameras(
     return query.all()
 
 
-@router.get("/geojson")
+@router.get("/geojson", summary="GeoJSON FeatureCollection for the GIS map")
 def list_cameras_geojson(
     department: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -249,22 +249,98 @@ def list_cameras_geojson(
     return {"type": "FeatureCollection", "features": features}
 
 
-@router.get("/gap-analysis")
+@router.get(
+    "/gap-analysis",
+    summary="Coverage gap-analysis report",
+    response_description="Structured coverage report with per-department stats, stale cameras, missing departments, and geographic quadrant analysis.",
+)
 def gap_analysis(db: Session = Depends(get_db)):
     """
-    Minimal gap-analysis report: cameras grouped by department and
-    connectivity status. Expand with real coverage-zone/geographic logic as
-    the GIS layer matures — this is intentionally simple for Day 2.
+    Day 3 — rich gap-analysis report generator.
+
+    Returns:
+      - per_department: breakdown of cameras by department with online/offline/unknown
+        counts, total, and coverage percentage (online / total * 100).
+      - stale_cameras: cameras still in 'unknown' status (never synced).
+      - missing_departments: known Gujarat government departments with zero onboarded cameras.
+      - geographic_coverage: cameras per lat/lng quadrant (1-degree grid) to identify
+        geographically uncovered zones.
+      - summary: aggregate totals across all departments.
     """
+    # 26 known Gujarat government departments per the hackathon brief
+    KNOWN_DEPARTMENTS = [
+        "Gujarat Police", "Home Department", "Roads & Buildings", "Urban Development",
+        "Revenue Department", "Education Department", "Health & Family Welfare",
+        "Narmada Water Resources", "Energy & Petrochemicals", "Industries & Mines",
+        "Agriculture & Co-operation", "Panchayat Rural Housing", "Ports & Transport",
+        "Forest & Environment", "Labour & Employment", "Social Justice & Empowerment",
+        "Science & Technology", "Information & Broadcasting", "General Administration",
+        "Finance Department", "Legal Department", "Legislative & Parliamentary Affairs",
+        "Food Civil Supplies", "Women & Child Development", "Tribal Development",
+        "Sports Youth & Cultural Activities",
+    ]
+
     cameras = db.query(models.Camera).all()
-    report: dict[str, dict[str, int]] = {}
+
+    # --- Per-department breakdown ---
+    dept_stats: dict[str, dict] = {}
     for cam in cameras:
-        dept_report = report.setdefault(cam.department, {"online": 0, "offline": 0, "unknown": 0})
-        dept_report[cam.connectivity_status] = dept_report.get(cam.connectivity_status, 0) + 1
-    return report
+        d = dept_stats.setdefault(cam.department, {"online": 0, "offline": 0, "unknown": 0, "total": 0})
+        status_key = cam.connectivity_status if cam.connectivity_status in ("online", "offline", "unknown") else "unknown"
+        d[status_key] += 1
+        d["total"] += 1
+
+    for dept in dept_stats.values():
+        dept["coverage_pct"] = round((dept["online"] / dept["total"]) * 100, 1) if dept["total"] > 0 else 0.0
+
+    # --- Stale cameras (never synced — still 'unknown') ---
+    stale = []
+    for cam in cameras:
+        if cam.connectivity_status == "unknown" or cam.connectivity_status == models.ConnectivityStatus.unknown:
+            stale.append({"camera_id": cam.camera_id, "department": cam.department, "name": cam.name})
+
+    # --- Missing departments (known list minus what's onboarded) ---
+    onboarded_depts = set(dept_stats.keys())
+    missing = [d for d in KNOWN_DEPARTMENTS if d not in onboarded_depts]
+
+    # --- Geographic coverage (1-degree lat/lng grid) ---
+    geo_grid: dict[str, int] = {}
+    for cam in cameras:
+        if cam.location is not None:
+            shape = to_shape(cam.location)
+            key = f"{int(shape.y)},{int(shape.x)}"  # lat,lng rounded to 1-degree
+            geo_grid[key] = geo_grid.get(key, 0) + 1
+
+    # --- Summary ---
+    total = len(cameras)
+    total_online = sum(d["online"] for d in dept_stats.values())
+    total_offline = sum(d["offline"] for d in dept_stats.values())
+    total_unknown = sum(d["unknown"] for d in dept_stats.values())
+
+    return {
+        "per_department": dept_stats,
+        "stale_cameras": stale,
+        "stale_count": len(stale),
+        "missing_departments": missing,
+        "missing_department_count": len(missing),
+        "geographic_coverage": geo_grid,
+        "summary": {
+            "total_cameras": total,
+            "online": total_online,
+            "offline": total_offline,
+            "unknown": total_unknown,
+            "coverage_pct": round((total_online / total) * 100, 1) if total > 0 else 0.0,
+            "departments_onboarded": len(onboarded_depts),
+            "departments_missing": len(missing),
+        },
+    }
 
 
-@router.get("/{camera_id}", response_model=schemas.CameraRead)
+@router.get(
+    "/{camera_id}",
+    response_model=schemas.CameraRead,
+    summary="Get a single camera by its camera_id",
+)
 def get_camera(camera_id: str, db: Session = Depends(get_db)):
     camera = db.query(models.Camera).filter_by(camera_id=camera_id).first()
     if not camera:

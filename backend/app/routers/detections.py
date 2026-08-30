@@ -19,7 +19,7 @@ from app.routers.watchlist import check_plate_against_watchlist
 router = APIRouter(prefix="/detections", tags=["detections"])
 
 
-@router.post("", response_model=schemas.DetectionRead)
+@router.post("", response_model=schemas.DetectionRead, summary="Record a new ANPR detection")
 def record_detection(detection: schemas.DetectionCreate, db: Session = Depends(get_db)):
     """
     Called by the ANPR pipeline for every plate read off a frame.
@@ -47,7 +47,7 @@ def record_detection(detection: schemas.DetectionCreate, db: Session = Depends(g
     return db_detection
 
 
-@router.get("/plate/{plate_number}", response_model=List[schemas.DetectionRead])
+@router.get("/plate/{plate_number}", response_model=List[schemas.DetectionRead], summary="Get all detections for a plate number")
 def get_detections_for_plate(plate_number: str, db: Session = Depends(get_db)):
     return (
         db.query(models.Detection)
@@ -57,7 +57,7 @@ def get_detections_for_plate(plate_number: str, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/route/{plate_number}", response_model=schemas.VehicleRoute)
+@router.get("/route/{plate_number}", response_model=schemas.VehicleRoute, summary="Reconstruct cross-camera route for a plate")
 def reconstruct_route(plate_number: str, db: Session = Depends(get_db)):
     """
     The Day 6 tracking test case: given a plate, return every camera it
