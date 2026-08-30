@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: netra_db
+    environment:
+      POSTGRES_USER: netra
+      POSTGRES_PASSWORD: netra
+      POSTGRES_DB: netra
+    ports:
+      - "5432:5432"
+    volumes:
+      - netra_pgdata:/var/lib/postgresql/data
+
+volumes:
+  netra_pgdata:
