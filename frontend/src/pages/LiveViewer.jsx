@@ -184,7 +184,7 @@ export default function LiveViewer() {
           {activeCameras.map((cam) => (
             <div key={cam.camera_id}>
               <HlsPlayer
-                src={cam.streams?.hls}
+                src={cam.streams?.hls?.startsWith("/") ? `/api${cam.streams.hls}` : cam.streams?.hls}
                 mp4Src={cam.streams?.mp4}
                 cameraId={`${cam.name || cam.camera_id} (${cam.source_host})`}
                 reconnect={reconnectConfig}

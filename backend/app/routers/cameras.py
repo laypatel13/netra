@@ -154,28 +154,39 @@ async def onboard_cameras_csv(
 
 @router.post("/sync-status", summary="Sync camera health status from upstream catalogue")
 def sync_camera_status(
-    host: str,
+    host: Optional[str] = None,
     db: Session = Depends(get_db),
     actor: str = Depends(get_actor),
     _role: str = Depends(require_admin),
 ):
     """
-    Pulls the /api/ingest catalogue from `host` and updates connectivity_status
-    for already-onboarded cameras whose camera_id matches an entry. Does NOT
-    onboard new cameras — this is a health-monitoring sync, not onboarding.
+    Pulls the camera catalogue from cctv.corp8.cloud/cameras.json (authenticated)
+    and updates connectivity_status for already-onboarded cameras whose camera_id
+    matches an entry. Does NOT onboard new cameras — health-monitoring sync only.
     Admin only.
     """
+    import os
+    from app.routers.feeds import _get_cctv_session
+
+    h = host or os.getenv("CCTV_HOST", "cctv.corp8.cloud").strip()
+    cctv_host = os.getenv("CCTV_HOST", "cctv.corp8.cloud").strip()
+
     try:
-        resp = requests.get(f"http://{host}/api/ingest", timeout=10)
+        if h == cctv_host:
+            # New authenticated endpoint
+            session = _get_cctv_session()
+            resp = session.get(f"https://{h}/cameras.json", timeout=15)
+        else:
+            resp = requests.get(f"http://{h}/api/ingest", timeout=10)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"could not reach catalogue at {host}: {e}")
+        raise HTTPException(status_code=502, detail=f"could not reach catalogue at {h}: {e}")
 
     catalogue = data if isinstance(data, list) else data.get("cameras", [])
     updated = 0
     for entry in catalogue:
-        cam_id = str(entry.get("id"))
+        cam_id = str(entry.get("id", entry.get("camera_id", "")))
         is_live = entry.get("live", entry.get("live_status", False))
         db_cam = db.query(models.Camera).filter_by(camera_id=cam_id).first()
         if db_cam:
@@ -185,10 +196,10 @@ def sync_camera_status(
             updated += 1
     db.commit()
     log_action(
-        db, actor, "camera.status_sync", target_type="host", target_id=host,
+        db, actor, "camera.status_sync", target_type="host", target_id=h,
         details=f"checked {len(catalogue)}, updated {updated}",
     )
-    return {"host": host, "cameras_checked": len(catalogue), "cameras_updated": updated}
+    return {"host": h, "cameras_checked": len(catalogue), "cameras_updated": updated}
 
 
 @router.get("", response_model=List[schemas.CameraRead], summary="List registered cameras with RBAC scoping")
