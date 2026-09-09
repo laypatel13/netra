@@ -28,8 +28,9 @@ def onboard_camera(
     camera: schemas.CameraCreate,
     db: Session = Depends(get_db),
     actor: str = Depends(get_actor),
+    _role: str = Depends(require_admin),
 ):
-    """Manual or single-record onboarding. For bulk CSV/API onboarding, see /bulk and /bulk-csv."""
+    """Manual or single-record onboarding. For bulk CSV/API onboarding, see /bulk and /bulk-csv. Admin only — was missing this check, unlike every other mutating endpoint here."""
     existing = db.query(models.Camera).filter_by(camera_id=camera.camera_id).first()
     if existing:
         raise HTTPException(status_code=409, detail="camera_id already registered")
@@ -386,4 +387,36 @@ def get_camera(camera_id: str, db: Session = Depends(get_db)):
     if not camera:
         raise HTTPException(status_code=404, detail="camera not found")
     return camera
+
+
+@router.delete("/{camera_id}", status_code=204, summary="Remove a camera from the registry")
+def delete_camera(
+    camera_id: str,
+    db: Session = Depends(get_db),
+    actor: str = Depends(get_actor),
+    _role: str = Depends(require_admin),
+):
+    """
+    Admin only — added so stray/test cameras can be cleared via the API
+    instead of raw SQL (needed twice already this session). Refuses to
+    delete a camera with recorded detections rather than cascading —
+    those are kept intentionally as the historical source of truth
+    (PLAN.md Section 2); decommissioning a camera shouldn't silently
+    erase what it already saw.
+    """
+    camera = db.query(models.Camera).filter_by(camera_id=camera_id).first()
+    if not camera:
+        raise HTTPException(status_code=404, detail="camera not found")
+
+    has_detections = db.query(models.Detection).filter_by(camera_id=camera_id).first() is not None
+    if has_detections:
+        raise HTTPException(
+            status_code=409,
+            detail="camera has recorded detections — those are kept as historical record, so this camera can't be deleted while they exist",
+        )
+
+    db.delete(camera)
+    db.commit()
+    log_action(db, actor, "camera.delete", target_type="camera", target_id=camera_id)
+    return None
 

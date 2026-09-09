@@ -13,6 +13,7 @@ one is a narrowing tool, not identification, so it's always returned at a
 lower tier ("attributes") than an exact plate match ("exact_plate").
 """
 import logging
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
+from app.dependencies import get_actor, require_admin
 from app.serializers import detection_to_read
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
@@ -42,6 +44,28 @@ def add_watchlist_entry(entry: schemas.WatchlistCreate, db: Session = Depends(ge
     db.commit()
     db.refresh(db_entry)
     return db_entry
+
+
+@router.delete(
+    "/{entry_id}", status_code=204, summary="Remove a watchlist entry",
+)
+def delete_watchlist_entry(
+    entry_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: str = Depends(get_actor),
+    _role: str = Depends(require_admin),
+):
+    """
+    Admin only — added so synthetic/test watchlist entries can be cleared
+    via the API instead of raw SQL (needed twice already this session for
+    stray test cameras/detections).
+    """
+    entry = db.query(models.WatchlistEntry).filter_by(id=entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="watchlist entry not found")
+    db.delete(entry)
+    db.commit()
+    return None
 
 
 @router.get("", response_model=List[schemas.WatchlistRead], summary="List all watchlist entries")

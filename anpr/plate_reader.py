@@ -19,7 +19,16 @@ import easyocr
 # Standard Indian plate format, e.g. GJ01AB1234 — 2 letters (state), 1-2
 # digits (RTO code), 1-3 letters (series), 4 digits (number). Loose enough
 # to catch older/newer formats, strict enough to reject OCR noise.
-PLATE_PATTERN = re.compile(r"^[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{4}$")
+#
+# Deliberately unanchored: OCR on real footage sometimes picks up a
+# character or two of boundary noise around the actual plate (a sticker,
+# a frame edge, a reflection) alongside a perfectly legible plate. Given
+# how hard a legible plate already is to get in this footage (PLAN.md
+# Section 0b), requiring the *entire* OCR string to be exactly the plate
+# format throws away genuine positives for no real safety benefit — the
+# 8-10 character shape here is specific enough that finding it as a
+# substring is still a strong signal, not a loosened one.
+PLATE_PATTERN = re.compile(r"[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{4}")
 
 # Surveying real footage from cctv.corp8.cloud (wide-angle traffic/junction
 # cams, not close-up ANPR-purpose cameras) showed most vehicle crops are far
@@ -59,7 +68,12 @@ class PlateReader:
         best: Optional[PlateReading] = None
         for _bbox, text, conf in results:
             normalized = re.sub(r"[^A-Z0-9]", "", text.upper())
-            if PLATE_PATTERN.match(normalized):
+            match = PLATE_PATTERN.search(normalized)
+            if match:
+                # Extract just the matched plate substring, not the whole
+                # OCR string — that's the point of searching instead of
+                # matching the full text.
+                candidate = match.group()
                 if best is None or conf > best.confidence:
-                    best = PlateReading(text=normalized, confidence=float(conf))
+                    best = PlateReading(text=candidate, confidence=float(conf))
         return best

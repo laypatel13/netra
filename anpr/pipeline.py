@@ -23,6 +23,8 @@ Usage:
     python pipeline.py --backend http://localhost:8000 --camera-ids cam01,cam13,cam15
     python pipeline.py --backend http://localhost:8000 --camera-ids all --max-cameras 5
     python pipeline.py --dry-run --camera-ids cam01 --max-frames 200
+    python pipeline.py --camera-ids cam01 --process-every-n 3 --dedup-cooldown-s 10 --conf-threshold 0.3
+        (tuning flags — adjust these against real behavior rather than editing constants)
 
 Design notes:
   - One thread per camera, but this is genuinely CPU-bound, not I/O-bound —
@@ -70,8 +72,12 @@ log = logging.getLogger("netra.anpr")
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
-DEDUP_COOLDOWN_S = 15.0  # don't re-report the same plate on the same camera within this window
-PROCESS_EVERY_N_FRAMES = 5  # run detection/OCR on 1 of every N grabbed frames — CPU-bound YOLO+EasyOCR can't keep up with every frame of a live 15-30fps stream
+# Defaults for --dedup-cooldown-s / --process-every-n / --conf-threshold
+# below — CLI-configurable rather than hardcoded so they can be tuned
+# against real behavior during the Day 3 rehearsal without a code edit.
+DEFAULT_DEDUP_COOLDOWN_S = 15.0
+DEFAULT_PROCESS_EVERY_N_FRAMES = 5
+DEFAULT_CONF_THRESHOLD = 0.25  # found more real vehicles than the detector's own 0.4 default in this session's testing
 
 
 def fetch_camera_catalogue(backend_url: str, host: Optional[str] = None) -> dict:
@@ -169,6 +175,8 @@ def post_detection(
 def process_camera(
     camera: dict, backend_url: str, detector: VehicleDetector, reader: PlateReader,
     backoff_cfg: dict, dry_run: bool, max_frames: Optional[int] = None,
+    dedup_cooldown_s: float = DEFAULT_DEDUP_COOLDOWN_S,
+    process_every_n: int = DEFAULT_PROCESS_EVERY_N_FRAMES,
 ) -> None:
     camera_id = camera["camera_id"]
     backoff = backoff_cfg["initial_ms"] / 1000.0
@@ -203,7 +211,7 @@ def process_camera(
             # skipping via grab()+retrieve() instead of read() on every
             # frame keeps the stream roughly caught up to live.
             grab_index += 1
-            if grab_index % PROCESS_EVERY_N_FRAMES != 0:
+            if grab_index % process_every_n != 0:
                 continue
             ok, frame = cap.retrieve()
             if not ok:
@@ -229,7 +237,7 @@ def process_camera(
                 if reading is not None:
                     cooldown_ok = (
                         reading.text not in last_seen_plate
-                        or (now - last_seen_plate[reading.text]) > DEDUP_COOLDOWN_S
+                        or (now - last_seen_plate[reading.text]) > dedup_cooldown_s
                     )
                     if not cooldown_ok:
                         continue
@@ -240,7 +248,7 @@ def process_camera(
                     attr_key = (vbox.label, color.name)
                     cooldown_ok = (
                         attr_key not in last_seen_attrs
-                        or (now - last_seen_attrs[attr_key]) > DEDUP_COOLDOWN_S
+                        or (now - last_seen_attrs[attr_key]) > dedup_cooldown_s
                     )
                     if not cooldown_ok:
                         continue
@@ -271,6 +279,18 @@ def main():
     parser.add_argument("--max-cameras", type=int, default=5, help="Cap concurrent camera threads")
     parser.add_argument("--dry-run", action="store_true", help="Log detections instead of POSTing them")
     parser.add_argument("--max-frames", type=int, default=None, help="Stop each camera after N frames (for testing)")
+    parser.add_argument(
+        "--process-every-n", type=int, default=DEFAULT_PROCESS_EVERY_N_FRAMES,
+        help="Fully decode+process 1 of every N grabbed frames (default: %(default)s) — tune down for a slower/less busy camera, up if the pipeline can't keep pace",
+    )
+    parser.add_argument(
+        "--dedup-cooldown-s", type=float, default=DEFAULT_DEDUP_COOLDOWN_S,
+        help="Don't re-report the same plate/attributes on the same camera within this many seconds (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--conf-threshold", type=float, default=DEFAULT_CONF_THRESHOLD,
+        help="Vehicle detector confidence threshold (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     catalogue = fetch_camera_catalogue(args.backend, args.host)
@@ -287,7 +307,7 @@ def main():
         return
 
     log.info("Loading vehicle detector and plate reader (first run downloads model weights)...")
-    detector = VehicleDetector()
+    detector = VehicleDetector(conf_threshold=args.conf_threshold)
     reader = PlateReader()
 
     threads = []
@@ -295,6 +315,10 @@ def main():
         t = threading.Thread(
             target=process_camera,
             args=(camera, args.backend, detector, reader, backoff_cfg, args.dry_run, args.max_frames),
+            kwargs={
+                "dedup_cooldown_s": args.dedup_cooldown_s,
+                "process_every_n": args.process_every_n,
+            },
             name=f"cam-{camera['camera_id']}",
             daemon=True,
         )

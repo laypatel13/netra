@@ -32,9 +32,10 @@ sightings, not a guaranteed single-vehicle route.
 """
 import os
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -133,6 +134,8 @@ def get_detections_for_plate(plate_number: str, db: Session = Depends(get_db)):
 def search_by_attributes(
     vehicle_type: str,
     vehicle_color: str,
+    since: Optional[datetime] = Query(default=None, description="Only sightings at/after this time (ISO 8601)"),
+    until: Optional[datetime] = Query(default=None, description="Only sightings at/before this time (ISO 8601)"),
     db: Session = Depends(get_db),
 ):
     """
@@ -141,22 +144,25 @@ def search_by_attributes(
     sightings ordered chronologically by created_at, same as /route; unlike
     a plate match, multiple different real vehicles may share the same
     type+color, so treat this as a narrowed list to cross-reference by time
-    and route plausibility, not a confirmed single-vehicle path.
+    and route plausibility, not a confirmed single-vehicle path. since/until
+    scope the search to a time window — without them this searches the
+    entire history, which only gets noisier as real detection volume grows.
     """
     if vehicle_type not in VEHICLE_TYPES:
         raise HTTPException(status_code=422, detail=f"vehicle_type must be one of {VEHICLE_TYPES}")
 
-    detections = (
-        db.query(models.Detection)
-        .filter(
-            models.Detection.vehicle_type == vehicle_type,
-            models.Detection.vehicle_color == vehicle_color,
-        )
-        .order_by(models.Detection.created_at.asc())
-        .all()
+    query = db.query(models.Detection).filter(
+        models.Detection.vehicle_type == vehicle_type,
+        models.Detection.vehicle_color == vehicle_color,
     )
+    if since is not None:
+        query = query.filter(models.Detection.created_at >= since)
+    if until is not None:
+        query = query.filter(models.Detection.created_at <= until)
+
+    detections = query.order_by(models.Detection.created_at.asc()).all()
     if not detections:
-        raise HTTPException(status_code=404, detail="no sightings found for this type/color combination")
+        raise HTTPException(status_code=404, detail="no sightings found for this type/color combination (in this time window, if given)")
 
     stops = [_to_route_stop(d) for d in detections]
     return schemas.VehicleRoute(query=f"{vehicle_color} {vehicle_type}", stops=stops)

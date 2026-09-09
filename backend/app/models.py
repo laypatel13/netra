@@ -1,7 +1,5 @@
 """
-Core data model for netra.
-
-Three tables, matching PLAN.md Section 6:
+Core data model for netra, matching PLAN.md Section 6:
 
 1. Camera        — Model 1 registry. Metadata only, no video. camera_id is
                     sourced from the Sentinel /api/ingest catalogue, never
@@ -11,15 +9,16 @@ Three tables, matching PLAN.md Section 6:
                     `timestamp_ms` MUST be derived from stream PTS
                     (CAP_PROP_POS_MSEC or equivalent) — never wall-clock /
                     frame-arrival time. See PLAN.md Section 8.
-3. Watchlist     — Representative watchlist DB. Real VAHAN/eGujCop/etc.
+3. WatchlistEntry — Representative watchlist DB. Real VAHAN/eGujCop/etc.
                     integration is explicitly out of scope for this build.
+4. AuditLog      — basic audit trail for registry actions.
 """
 import enum
 import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import Column, String, Float, DateTime, Enum, ForeignKey, Integer
+from sqlalchemy import Column, String, Float, DateTime, Enum, ForeignKey, Integer, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -103,6 +102,11 @@ class Detection(Base):
     created_at = Column(DateTime, default=datetime.utcnow)  # used for cross-camera ordering — see detections.py
 
     camera = relationship("Camera", back_populates="detections")
+
+    __table_args__ = (
+        # Speeds up GET /detections/search, which filters on this exact pair.
+        Index("ix_detections_vehicle_type_color", "vehicle_type", "vehicle_color"),
+    )
 
 
 class WatchlistEntry(Base):

@@ -4,6 +4,8 @@ netra — FastAPI entrypoint.
 Model 1 (registry/GIS) + Model 2 (live viewing/ANPR/watchlist/tracking).
 See PLAN.md at the repo root for full context before extending this.
 """
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -53,9 +55,17 @@ app = FastAPI(
     openapi_tags=OPENAPI_TAGS,
 )
 
+# Was allow_origins=["*"] — tightened per the PLAN.md RBAC TODO. Configurable
+# via env var since the dev origin (Vite on :5173) and the eventual hosted
+# frontend origin (once Supabase-deployed) differ; comma-separated for more
+# than one. Defaults to the local dev origin so nothing breaks out of the box.
+_cors_origins = [
+    o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten before submission — see PLAN.md RBAC note
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
