@@ -1,0 +1,30 @@
+[
+  {
+    "plate_number": "GJ01AB1234",
+    "category": "stolen",
+    "source": "representative-dataset"
+  },
+  {
+    "plate_number": "GJ05CD5678",
+    "category": "blacklisted",
+    "source": "representative-dataset"
+  },
+  {
+    "vehicle_type": "car",
+    "vehicle_color": "silver_gray",
+    "category": "suspect",
+    "source": "representative-dataset"
+  },
+  {
+    "vehicle_type": "car",
+    "vehicle_color": "black",
+    "category": "stolen",
+    "source": "representative-dataset"
+  },
+  {
+    "vehicle_type": "truck",
+    "vehicle_color": "yellow",
+    "category": "suspect",
+    "source": "representative-dataset"
+  }
+]

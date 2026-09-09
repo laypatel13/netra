@@ -1,0 +1,31 @@
+camera_id,name,latitude,longitude,department,camera_type,ownership,connectivity_status,storage_type,retention_days
+cam01,01 Chiman bhai Bridge,23.0280,72.5850,Roads & Buildings,ip,Roads & Buildings,unknown,cloud,15
+cam02,02 Janpath,23.0350,72.5650,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam03,03 O.N.G.C. Office,23.0400,72.5500,Industries & Mines,ip,ONGC,unknown,cloud,15
+cam04,04 Paldi Circle,23.0170,72.5620,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam05,05 Visat teen Rasta,23.1020,72.6010,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam06,06 Timbavadi gate-Junagadh,21.5220,70.4610,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam07,07 hero-showroom-gir-somnath,20.9150,70.4020,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam08,08 majewadi-gate-junagadh,21.5240,70.4630,Urban Development,ip,Junagadh Municipal Corporation,unknown,cloud,15
+cam09,09 new-bypass-near-by-circle-junagadh-2,21.5300,70.4700,Roads & Buildings,ip,Roads & Buildings,unknown,cloud,15
+cam10,10 char-chowk-road-2-junagadh,21.5210,70.4580,Roads & Buildings,ip,Roads & Buildings,unknown,cloud,15
+cam11,11 dolatpara-junagadh,21.5180,70.4550,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam12,12 Tri Mandir Adalaj Tollnaka,23.1660,72.5830,Ports & Transport,ip,Roads & Buildings Toll Authority,unknown,cloud,15
+cam13,13 CN Vidhyalaya,23.0300,72.5600,Education Department,ip,Education Department,unknown,cloud,15
+cam14,14 Delight RLVD,23.0250,72.5700,Home Department,ip,Home Department,unknown,cloud,15
+cam15,15 Suvidha park,23.0500,72.5750,Urban Development,ip,Ahmedabad Municipal Corporation,unknown,cloud,15
+cam16,16 Visat P2,23.1010,72.6000,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam17,17 Rajkot Bus Port CCTV,22.3050,70.8020,Ports & Transport,ip,Gujarat State Road Transport Corporation,unknown,cloud,15
+cam18,18 Rajkot CCTV,22.2960,70.7980,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam19,"19 Khaparia Gram Panchayat, Taluka Gandevi, Dist. Navsari",20.8500,72.9500,Panchayat Rural Housing,ip,Gram Panchayat,unknown,cloud,15
+cam20,20 Mohanpura,22.3100,70.7900,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam21,23 Patan Dethali Char Rasta,23.8500,72.1300,Roads & Buildings,ip,Roads & Buildings,unknown,cloud,15
+cam22,28 BK Mervada tran Rasta,24.0000,72.4000,Roads & Buildings,ip,Roads & Buildings,unknown,cloud,15
+cam23,30 kheram,21.6000,70.6000,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam24,33 dehgam,23.1700,72.8200,Panchayat Rural Housing,ip,Gram Panchayat,unknown,cloud,15
+cam25,34 dhanori,23.1500,72.7500,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam26,35 Tankal,22.5500,72.9200,Panchayat Rural Housing,ip,Gram Panchayat,unknown,cloud,15
+cam27,36 bilimora,20.7500,72.9600,Gujarat Police,ip,Gujarat Police,unknown,cloud,15
+cam28,37 bilimora,20.7530,72.9630,Urban Development,ip,Bilimora Nagarpalika,unknown,cloud,15
+cam29,38 bilimora,20.7560,72.9660,Roads & Buildings,ip,Roads & Buildings,unknown,cloud,15
+cam30,Gandhidham Rambaugh p2,23.0800,70.1300,Ports & Transport,ip,Kandla Port Trust,unknown,cloud,15

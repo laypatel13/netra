@@ -66,13 +66,17 @@ Expanded scope (see `PLAN.md` Section 0b for the full reasoning): plate ANPR alo
 
 Given core landed a day ahead of schedule, Day 3's integration test can start early if the team is ready — no need to wait for Sep 12 if Supabase provisioning and watchlist seeding are also done sooner.
 
-## Day 3 (Sep 12) — End-to-End Integration Test
+## Day 3 (Sep 12) — End-to-End Integration Test — done early (Sep 9), real findings below
 
-- Full test-case rehearsal: onboard feeds → live monitoring → vehicle detected (plate if legible, else type+color+thumbnail) → watchlist alert fires (exact or attribute-tiered) → route renders on the GIS map
-- Bug fixes from whatever the rehearsal surfaces
-- Stress-test reconnect/backoff by deliberately restarting a feed mid-test
-- Confirm behavior across a scene discontinuity (loop point) — long-lived ANPR state must recover from the hard cut, not assume continuity
-- If ANPR, attribute tracking, or route-on-map isn't reliable yet, this is the day to cut scope (e.g., ship the text-based route view if the polyline isn't stable, or drop the stretch items from Day 2) rather than carry risk into Day 4
+Ran the actual rehearsal using the new `test/` toolkit (`test/smoke_test.sh` + `test/seed_data/`), not just piece-by-piece curl checks:
+
+- ✅ **Full pipeline, live, non-synthetic**: seeded the watchlist (`test/seed_data/watchlist_seed.json`), ran `anpr/pipeline.py` against real `cam14` footage, and got genuine live detections ("silver_gray car", "yellow truck", etc.) that correctly matched the pre-seeded attribute-tier watchlist entries — confirmed both via the API and visually on the Watchlist page (real thumbnails, correct "POSSIBLE MATCH — BY DESCRIPTION" tier badge, live-polled with no manual refresh). This is the strongest evidence yet for evaluation criterion #1 ("successful test case") — a real camera feed drove a real detection drove a real alert, end to end.
+- ✅ **Reconnect-with-backoff, verified directly**: pointed `process_camera` at a deliberately unreachable stream and confirmed it correctly logs a warning and retries rather than giving up. **Real finding, not assumed**: for a genuinely unreachable host, each connection attempt itself takes ~30s (FFmpeg's own internal connection timeout fires around 30.0-30.1s consistently) *before* our 2s/4s/8s backoff sleep even starts — so the effective retry cadence for a fully-dead camera is ~30s+ per attempt, not the 2-30s range the backoff config alone would suggest. Worth knowing if a camera looks "stuck" during the live demo — it's not necessarily broken, it may just be mid-FFmpeg-timeout on a legitimately unreachable attempt.
+- ⚠️ **Cross-camera plate-route reconstruction — verified via synthetic data, not fresh live traffic.** Being honest about a real constraint: live sandbox traffic can't be scripted to drive the same physical vehicle across multiple disconnected camera feeds (they show unrelated intersections across Gujarat). This piece stays verified via this session's `cam01→cam13→cam15` synthetic-plate polyline test (mechanically correct, confirmed down to the raw SVG path data), not re-claimed as freshly observed live. The mechanism is proven; getting a live multi-camera plate match is a matter of luck with real traffic, not a code gap.
+- ⚠️ **Scene discontinuity (loop point) — not directly observed**, since we don't know each camera's loop length and didn't run long enough to guarantee hitting one. Architecturally this should be safe regardless: detection/dedup state is not a persistent cross-frame tracker (no re-ID gallery, no track IDs carried across frames) — each processed frame's detections are independent, and dedup cooldowns are just timestamps in a dict keyed by plate or (type, color), which don't assume scene continuity. Flagged as a reasoned-but-unobserved risk, not a confirmed pass.
+- No bugs found that needed fixing during the rehearsal itself — the Tier-1 hardening pass already caught the issues this surfaced (RBAC, delete guards, search filters, plate substring matching).
+
+**Still open before Day 4:** Supabase provisioning (`PLAN.md` Section 5a) — the rehearsal above ran entirely against the local Docker Postgres, not yet against the eventual deployed database.
 
 ## Day 4 (Sep 13) — Documentation
 

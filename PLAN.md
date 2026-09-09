@@ -64,10 +64,22 @@ Vehicle attribute tracking, real-time alerts, and route-on-map (the three items 
 - Backend: nullable plate on `Detection`/`WatchlistEntry`, `GET /detections/search` (attribute candidate sightings), `GET /detections/{id}/thumbnail`, generalized `check_detection_against_watchlist` (exact-plate and attribute tiers), `GET /watchlist/alerts/recent`.
 - Frontend: new Watchlist page (entry management, mode toggle plate/attributes, live-polled tiered alert feed), Dashboard search generalized to plate-or-attributes with thumbnails, Registry GIS map now draws the route as a polyline + numbered `CircleMarker` stops with popups (thumbnail included) — verified visually in-browser, no console errors.
 
+### 0d. Tier-1 hardening pass — done
+
+A pre-Day-3 review pass (re-reading the actual current code, not guessing) found and fixed: `POST /cameras` was missing the admin check every other mutating registry endpoint has; no way to delete a stray camera/watchlist entry without raw SQL (added `DELETE /cameras/{id}` and `DELETE /watchlist/{id}`, admin-only, camera delete refuses if detections exist rather than cascading history away); `/detections/search` was missing the `since`/`until` filters `TIMELINE.md` had already named but never implemented; the plate regex required the *entire* OCR string to match instead of finding a plate-shaped substring, throwing away genuine reads that had boundary noise; pipeline tuning constants were hardcoded instead of CLI flags; CORS was wide open; no index existed on `(vehicle_type, vehicle_color)` for the new search endpoint. All verified via curl/live pipeline runs, not just code-reviewed.
+
+### 0e. A dedicated `test/` toolkit for the team
+
+Consolidated the project's scattered ad hoc debug scripts (`scripts/test_feed_connection.py`, `anpr/test_cv2_https.py`, `backend/test_proxy.py`, `backend/test_proxy2.py`) into `test/connectivity/`, added reusable seed data (`test/seed_data/cameras_seed.csv` — the 30 real cameras, previously only a throwaway scratch file; `watchlist_seed.json` — representative entries including colors/types actually observed live), a scripted end-to-end health check (`test/smoke_test.sh` — 14 checks, idempotent, re-runnable), and `test/README.md` — a from-scratch onboarding/testing guide for anyone on the team who wasn't in this build session: what the pieces are, *why* the non-obvious decisions were made (created_at vs. PTS, why every vehicle is recorded, why thumbnails exist, why alerts are tiered), how to run everything locally, and a manual click-through UI checklist.
+
+### 0f. Day 3 — done early, see `TIMELINE.md` for the real findings
+
+Ran the full rehearsal using the new toolkit rather than piece-by-piece checks: a **real, live, non-synthetic** attribute-tier watchlist alert (seeded entry + real `cam14` footage → real match, confirmed on the Watchlist page with real thumbnails) — the strongest evidence yet for evaluation criterion #1. Reconnect-with-backoff verified directly, with a real finding: an unreachable host's connection attempt itself takes ~30s (FFmpeg's own timeout) before our backoff sleep even starts. Two things honestly flagged as not fully verified live: cross-camera plate-route reconstruction (proven via synthetic multi-camera data, since live traffic can't be scripted to drive one vehicle across disconnected feeds) and scene-discontinuity behavior (architecturally reasoned to be safe — no persistent cross-frame state — but not directly observed within the test window).
+
 **Remaining, in roughly this order:**
-1. **Stretch items from 0b** (only if time allows): GIS-plausibility ranking for attribute-based candidates; partial/low-confidence plate tier.
-2. **Supabase provisioning** (see 5a) — code is ready, a live project isn't created yet. Do this before Day 3's integration test at the latest.
-3. **Seed a realistic representative watchlist dataset** for the actual demo plates/vehicles, replacing the synthetic test entries used to verify the matching logic this session.
+1. **Supabase provisioning** (see 5a) — code is ready, a live project isn't created yet. The Day 3 rehearsal above ran against local Docker Postgres only.
+2. **Stretch items from 0b** (only if time allows): GIS-plausibility ranking for attribute-based candidates; partial/low-confidence plate tier.
+3. Frontend visual/UX polish — deliberately deprioritized behind the above per the team's own call.
 
 ---
 
