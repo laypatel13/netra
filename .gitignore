@@ -5,6 +5,9 @@ __pycache__/
 venv/
 .env
 
+# Downloaded model weights (fetched automatically on first run — see anpr/detector.py)
+*.pt
+
 # Node
 node_modules/
 dist/

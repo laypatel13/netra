@@ -1,0 +1,252 @@
+"""
+ANPR pipeline (TIMELINE.md Day 1).
+
+Connects to camera feeds resolved by the backend's own /feeds/catalogue
+rather than re-fetching cameras.json directly — this stays consistent with
+what HlsPlayer.jsx already uses, and gets the authenticated RTSP/HLS URLs
+and the reconnect-with-backoff config for free instead of duplicating that
+logic a third time.
+
+Stream URLs now include authentication (email:password@ in RTSP/WebRTC URLs
+on the direct IP 103.250.160.189). The backend's /feeds/catalogue proxy
+handles login and URL construction — this pipeline just consumes the
+resolved URLs it returns.
+
+Camera IDs are cam01–cam30 (not numeric). The pipeline reads them from the
+catalogue, never hardcoded.
+
+Detects vehicles, reads plates, and POSTs each valid detection to
+/detections with a PTS-derived timestamp — never wall-clock time. See
+PLAN.md Section 8.
+
+Usage:
+    python pipeline.py --backend http://localhost:8000 --camera-ids cam01,cam13,cam15
+    python pipeline.py --backend http://localhost:8000 --camera-ids all --max-cameras 5
+    python pipeline.py --dry-run --camera-ids cam01 --max-frames 200
+
+Design notes:
+  - One thread per camera, but this is genuinely CPU-bound, not I/O-bound —
+    YOLO detection + EasyOCR on CPU is slow enough (measured: on the order
+    of hundreds of ms per processed frame) that it cannot keep up with a
+    live 15-30fps stream. PROCESS_EVERY_N_FRAMES throttles via grab()+
+    retrieve() (skip cheaply, only fully decode+process 1 in N frames)
+    instead of running detection on every single frame and falling further
+    and further behind real time. Many concurrent camera threads will
+    contend for CPU (Python's GIL is released during the heavy torch/OpenCV
+    compute, so there's some real parallelism, but not linear scaling) —
+    keep --max-cameras modest for a live demo rather than trying to run
+    all 30 at once.
+  - No fixed-shape batching across cameras — each camera's frames are
+    processed independently at their own native resolution/codec/frame rate.
+  - De-duplication: the same plate seen on consecutive frames of the same
+    camera isn't re-reported every frame — only on first sighting or after
+    a cooldown window. Cooldown uses wall-clock time deliberately (it's
+    bookkeeping for how often *we* re-report), while every detection's
+    stored timestamp_ms stays PTS-derived.
+"""
+import argparse
+import logging
+import os
+import threading
+import time
+from typing import Optional
+
+import cv2
+import requests
+
+from detector import VehicleDetector
+from plate_reader import PlateReader
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
+)
+log = logging.getLogger("netra.anpr")
+
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
+DEDUP_COOLDOWN_S = 15.0  # don't re-report the same plate on the same camera within this window
+PROCESS_EVERY_N_FRAMES = 5  # run detection/OCR on 1 of every N grabbed frames — CPU-bound YOLO+EasyOCR can't keep up with every frame of a live 15-30fps stream
+
+
+def fetch_camera_catalogue(backend_url: str, host: Optional[str] = None) -> dict:
+    params = {"host": host} if host else {}
+    resp = requests.get(f"{backend_url}/feeds/catalogue", params=params, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+WARMUP_FRAMES = 15  # frames to discard after connect — decoder warnings/garbage
+                     # before the first IDR frame are normal (PLAN.md Section 8),
+                     # confirmed empirically: the very first frame read after
+                     # connect is sometimes solid-gray decode garbage.
+
+
+def open_capture(camera: dict, backend_url: str) -> Optional[cv2.VideoCapture]:
+    """
+    Try RTSP first (best for PTS accuracy). `mp4` is None for the primary
+    cctv.corp8.cloud host (no such endpoint exists — see PLAN.md Section 8),
+    so this only reaches it for other/legacy hosts that do provide one.
+    `hls` is a backend-relative proxy path (e.g. /feeds/cam01/hls-proxy/...),
+    same as the frontend consumes — must be made absolute against
+    backend_url before cv2/ffmpeg can open it.
+
+    Discards a handful of frames right after connecting: OpenCV reports
+    `isOpened()` as soon as the RTSP handshake completes, before the decoder
+    has actually received a keyframe, so the first few reads can come back
+    as valid-looking-but-garbage frames instead of erroring.
+    """
+    streams = camera["streams"]
+    for key in ("rtsp", "mp4", "hls"):
+        url = streams.get(key)
+        if not url:
+            continue
+        if key == "hls" and url.startswith("/"):
+            url = f"{backend_url}{url}"
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        start = time.time()
+        while not cap.isOpened() and (time.time() - start) < 8:
+            time.sleep(0.5)
+        if cap.isOpened():
+            for _ in range(WARMUP_FRAMES):
+                cap.read()
+            log.info("Camera %s connected via %s", camera["camera_id"], key)
+            return cap
+        cap.release()
+    return None
+
+
+def post_detection(
+    backend_url: str, camera_id: str, plate: str, timestamp_ms: float,
+    confidence: float, dry_run: bool,
+) -> None:
+    payload = {
+        "plate_number": plate,
+        "timestamp_ms": timestamp_ms,
+        "camera_id": camera_id,
+        "confidence": confidence,
+    }
+    if dry_run:
+        log.info("[DRY RUN] would POST %s", payload)
+        return
+    try:
+        resp = requests.post(f"{backend_url}/detections", json=payload, timeout=5)
+        if resp.status_code == 404:
+            log.warning(
+                "Camera %s not onboarded in the registry — onboard it before running ANPR against it",
+                camera_id,
+            )
+        else:
+            resp.raise_for_status()
+    except requests.RequestException as e:
+        log.error("Failed to POST detection for camera %s: %s", camera_id, e)
+
+
+def process_camera(
+    camera: dict, backend_url: str, detector: VehicleDetector, reader: PlateReader,
+    backoff_cfg: dict, dry_run: bool, max_frames: Optional[int] = None,
+) -> None:
+    camera_id = camera["camera_id"]
+    backoff = backoff_cfg["initial_ms"] / 1000.0
+    last_seen: dict[str, float] = {}  # plate -> wall-clock time last reported (cooldown bookkeeping only)
+    frames_processed = 0
+
+    while max_frames is None or frames_processed < max_frames:
+        cap = open_capture(camera, backend_url)
+        if cap is None:
+            log.warning("Camera %s unreachable on any stream type — retrying in %.0fs", camera_id, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * backoff_cfg["multiplier"], backoff_cfg["max_ms"] / 1000.0)
+            continue
+        backoff = backoff_cfg["initial_ms"] / 1000.0
+
+        grab_index = 0
+        while max_frames is None or frames_processed < max_frames:
+            ok = cap.grab()
+            if not ok:
+                log.warning("Camera %s frame read failed — reconnecting", camera_id)
+                break
+
+            # YOLO+OCR on CPU can't keep up with 15-30fps live video — fully
+            # decoding and processing every frame would make the pipeline
+            # fall further and further behind real time. grab() is cheap
+            # (skips the full decode most backends would otherwise do), so
+            # skipping via grab()+retrieve() instead of read() on every
+            # frame keeps the stream roughly caught up to live.
+            grab_index += 1
+            if grab_index % PROCESS_EVERY_N_FRAMES != 0:
+                continue
+            ok, frame = cap.retrieve()
+            if not ok:
+                continue
+
+            pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)  # PTS, not wall-clock — PLAN.md Section 8
+            frames_processed += 1
+
+            for vbox in detector.detect(frame):
+                crop = frame[vbox.y1:vbox.y2, vbox.x1:vbox.x2]
+                if crop.size == 0:
+                    continue
+                reading = reader.read(crop)
+                if reading is None:
+                    continue
+
+                now = time.time()
+                cooldown_ok = (
+                    reading.text not in last_seen or (now - last_seen[reading.text]) > DEDUP_COOLDOWN_S
+                )
+                if not cooldown_ok:
+                    continue
+                last_seen[reading.text] = now
+
+                combined_confidence = round((vbox.confidence + reading.confidence) / 2, 3)
+                log.info("Camera %s: plate %s (conf %.2f)", camera_id, reading.text, combined_confidence)
+                post_detection(backend_url, camera_id, reading.text, pts_ms, combined_confidence, dry_run)
+
+        cap.release()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="netra Day 4 — ANPR pipeline")
+    parser.add_argument("--backend", default="http://localhost:8000")
+    parser.add_argument("--host", default=None, help="Camera source host — defaults to the backend's configured host(s)")
+    parser.add_argument("--camera-ids", default="all", help="Comma-separated camera ids, or 'all'")
+    parser.add_argument("--max-cameras", type=int, default=5, help="Cap concurrent camera threads")
+    parser.add_argument("--dry-run", action="store_true", help="Log detections instead of POSTing them")
+    parser.add_argument("--max-frames", type=int, default=None, help="Stop each camera after N frames (for testing)")
+    args = parser.parse_args()
+
+    catalogue = fetch_camera_catalogue(args.backend, args.host)
+    cameras = catalogue["cameras"]
+    backoff_cfg = catalogue["reconnect"]
+
+    if args.camera_ids != "all":
+        wanted = set(args.camera_ids.split(","))
+        cameras = [c for c in cameras if c["camera_id"] in wanted]
+
+    cameras = cameras[: args.max_cameras]
+    if not cameras:
+        log.error("No matching cameras found in catalogue")
+        return
+
+    log.info("Loading vehicle detector and plate reader (first run downloads model weights)...")
+    detector = VehicleDetector()
+    reader = PlateReader()
+
+    threads = []
+    for camera in cameras:
+        t = threading.Thread(
+            target=process_camera,
+            args=(camera, args.backend, detector, reader, backoff_cfg, args.dry_run, args.max_frames),
+            name=f"cam-{camera['camera_id']}",
+            daemon=True,
+        )
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+
+if __name__ == "__main__":
+    main()

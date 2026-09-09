@@ -27,9 +27,10 @@ This document is the single source of truth for context, architecture, endpoints
 | Feed catalogue proxy (authenticated HLS via backend, direct RTSP/WHEP) | Done |
 | Live viewer (multi-camera HLS grid with reconnect-with-backoff) | Done — was silently failing to keep more than 1–2 tiles alive; **fixed this session**, see Section 0a |
 | Unified control room Dashboard | Was a bare plate-search stub; **rebuilt this session** into a real control room (coverage summary, live preview grid, plate search) |
-| ANPR pipeline (YOLO detect + OCR + PTS timestamp + POST /detections) | Exists (`anpr/pipeline.py`) but needs a rework pass — not yet solid enough to trust for the test case |
-| Watchlist + match-on-detection | Backend logic exists (`watchlist.py`, wired into `detections.py`); no real-time alert delivery to the UI yet (still logs a warning server-side only) |
-| Cross-camera route reconstruction | `/detections/route/{plate}` works and is wired into the Dashboard's plate search; **not yet drawn on the GIS map** — currently text/list only |
+| ANPR pipeline (YOLO detect + OCR + PTS timestamp + POST /detections) | Hardened this session (frame throttling, decoder warm-up skip, crop upscaling, absolute HLS URLs) — but see 0c: plate legibility itself is a real, separate problem |
+| Vehicle attribute tracking (type + color, complementing plate ANPR) | **New, in progress** — see 0c. Not yet implemented: nullable plate on Detection/Watchlist, color extraction, thumbnail capture, attribute search/matching |
+| Watchlist + match-on-detection | Backend logic exists (`watchlist.py`, wired into `detections.py`) for exact-plate matches; no real-time alert delivery to the UI yet; attribute-based matching not built yet (0c) |
+| Cross-camera route reconstruction | `/detections/route/{plate}` works, ordered by `created_at` (fixed this session — see 0a), wired into the Dashboard's plate search; **not yet drawn on the GIS map**; attribute-based route search not built yet (0c) |
 | Docs (PPT, HLD), demo recordings | Not started |
 
 ### 0a. Bugs fixed this session (read before touching feeds/viewer code again)
@@ -41,11 +42,26 @@ This document is the single source of truth for context, architecture, endpoints
 - **Bad enum values silently 500'd**: `CameraCreate`/`WatchlistCreate` accepted any string for `camera_type`/`connectivity_status`/`storage_type`/`category`, so a typo would pass Pydantic validation and then blow up as a raw DB error when SQLAlchemy tried to write it into an `Enum` column — including mid-batch in bulk CSV import, which could abort an otherwise-good import. Fixed with `Literal[...]` validation in `schemas.py` and equivalent checks in the CSV import path (bad rows are now skipped cleanly, like already-bad lat/lng rows were).
 - **`/cameras/sync-status` was marking every camera "offline" incorrectly**: `cctv.corp8.cloud`'s `/cameras.json` doesn't return a `live`/`live_status` field at all (confirmed live, not just in the stale disk cache). The old code treated a *missing* field the same as *present-and-false*, so every synced camera got written to the registry as confirmed offline — a false negative, not real health data. Fixed to leave a camera's `connectivity_status` untouched when the upstream API doesn't supply the field, and to report `cameras_skipped_no_live_field` in the response so this is visible instead of silent. Practical effect: until Sentinel's feed actually returns this field (maybe only in the Phase 2 production environment), registry cameras will legitimately stay "unknown"/stale — that's honest, not a bug on our end, and it's unrelated to whether the video stream itself plays (confirmed separately via the Live Viewer).
 
-### 0b. Known gaps — pick these up next, in roughly this order
+### 0b. Major finding: plate legibility is a real problem, and the pivot it led to
 
-1. **ANPR pipeline rework** (`TIMELINE.md` Day 1) — this is the next big chunk of work.
-2. **Real-time alerts** (`TIMELINE.md` Day 2) — watchlist matching happens server-side on every detection but nothing pushes it to the browser. **This is now confirmed required, not optional**: the official own-feed demo checklist explicitly calls for "watchlist matching, alert generation" (Section 10). Cheapest path for hackathon scope: short-poll a new `GET /watchlist/alerts/recent` endpoint from the Dashboard rather than building a websocket layer — good enough to demo, doesn't need new infra.
-3. **Route-on-map** (`TIMELINE.md` Day 2) — `/detections/route/{plate}` returns the right data; it just isn't drawn as a polyline on the Registry GIS map yet. Cheapest path: reuse the same Leaflet map instance, add a `Polyline` + numbered markers for the stops returned by that endpoint.
+Empirically tested the hardened ANPR pipeline against 9+ real cctv.corp8.cloud cameras (including the toll plaza `cam12` and `cam13`, one of the three official test-case cameras) — the vehicle detector works correctly (verified 150+ real, correctly-labeled vehicle detections), but **zero legible plates were found across every camera sampled**. This isn't a code bug: these are generic wide-angle surveillance cameras (exactly what the hackathon brief describes — heterogeneous department CCTV), not purpose-built ANPR hardware.
+
+Confirmed via research: real Ahmedabad/Gandhinagar e-challan systems use **dedicated 4-5MP, IR-illuminated ANPR cameras** mounted close to and aimed specifically at a violation zone (stop line, a fixed lane) — fundamentally different from a wide-angle overview camera watching an entire intersection from a distance. CCTV records the scene; ANPR-grade hardware is a separate, purpose-built capture system. Sources: [How ANPR Cameras and CCTV Are Used in India's e-Challan System](https://www.cars24.com/article/anpr-cameras-and-cctv-use-in-indian-e-challan-system/), [Choosing the Right Camera for ANPR — TechNexion](https://www.technexion.com/resources/choosing-the-right-camera-for-automatic-number-plate-recognition/), [How ANPR & e-Challan System Works in India](https://parkplus.io/blog/challan/how-anpr-echallan-system-works-in-india).
+
+**The pivot:** don't limit cross-camera tracking to plate numbers. A suspect vehicle ("a red car," "a long truck") can be usefully tracked by coarse visual attributes — type and color — even with no legible plate, the same way real investigations narrow suspects by vehicle description when a plate isn't known. This is explicitly bonus-worthy per Section 11 ("advanced cross-camera tracking," "additional reliable analytics beyond mandatory ANPR") and turns the plate-legibility problem into a demonstrated architectural strength instead of a weakness to hide. **Frame this honestly as a narrowing tool, not identification** — "red car" alone matches many vehicles; it complements plate ANPR for exactly the case where a plate isn't known, cross-referenced with time/route plausibility, not a unique-ID guarantee. That framing is itself the sophisticated answer, not a caveat to bury.
+
+Design, once implemented:
+- `Detection.plate_number` becomes nullable; add `vehicle_type` (car/motorcycle/bus/truck — already detected by YOLO for free) and `vehicle_color` (dominant color extracted from the crop, small named palette) to both `Detection` and `WatchlistEntry`. A watchlist entry needs plate OR type+color, not neither.
+- Every vehicle sighting gets recorded (type+color always, plate when legible) — mirrors how plate detections already work, and is what actually makes "trace this vehicle's route" possible for one that wasn't already flagged before cameras saw it.
+- **Save a thumbnail crop with every detection**, not just a computed color label — color extraction is unreliable under sodium streetlight/headlight glare (observed directly in this session's samples), so a human-checkable image is the real fallback when the automated label might be wrong.
+- Watchlist matching generalizes to check plate-based **and** attribute-based entries; alerts are tiered (exact plate > attributes-only) and deduped over a time window so the feed doesn't flood with "possible red car" noise every time a common-colored car passes a camera.
+- Stretch, only if time remains: rank attribute-based candidate sightings by GIS plausibility (camera lat/lng already in the registry — reject a "match" that would require impossible travel speed between two cameras) and keep partial/low-confidence OCR reads as a middle tier instead of today's all-or-nothing plate regex match.
+
+### 0c. Known gaps — pick these up next, in roughly this order
+
+1. **Vehicle attribute tracking** (0b, `TIMELINE.md` Day 2) — the pivot above. Biggest remaining chunk of work; see `TIMELINE.md` for the core/stretch split.
+2. **Real-time alerts** (`TIMELINE.md` Day 2) — watchlist matching happens server-side on every detection but nothing pushes it to the browser. **Confirmed required, not optional**: the official own-feed demo checklist explicitly calls for "watchlist matching, alert generation" (Section 10). Cheapest path: short-poll a new `GET /watchlist/alerts/recent` endpoint from the Dashboard rather than building a websocket layer. Now also needs to surface attribute-based matches, tiered against exact-plate matches (0b).
+3. **Route-on-map** (`TIMELINE.md` Day 2) — `/detections/route/{plate}` returns the right data; it just isn't drawn as a polyline on the Registry GIS map yet. Cheapest path: reuse the same Leaflet map instance, add a `Polyline` + numbered markers for the stops returned by that endpoint. Should support attribute-based candidate routes too, not just plate routes.
 4. **Supabase provisioning** (see 5a) — code is ready, a live project isn't created yet. Do this before Day 3's integration test at the latest.
 
 ---
@@ -56,9 +72,9 @@ This document is the single source of truth for context, architecture, endpoints
 
 **Official site:** https://sentinel.gujarat.gov.in
 
-**One-line pitch:** Turns 26 fragmented, department-owned CCTV systems into one searchable network — pull up a vehicle's plate, see every camera it passed and when, and get auto-alerted if it matches a stolen/wanted/blacklisted watchlist, without touching or replacing any department's existing infrastructure.
+**One-line pitch:** Turns 26 fragmented, department-owned CCTV systems into one searchable network — pull up a vehicle's plate (or, when the plate isn't legible, just its type and color), see every camera it passed and when, and get auto-alerted if it matches a stolen/wanted/blacklisted watchlist, without touching or replacing any department's existing infrastructure.
 
-**Concrete example of what this solves:** A suspect vehicle is seen on Camera 1 during a crime. Right now, nobody knows it also passed Camera 13 an hour later and Camera 15 after that — each camera system is its own island with nobody watching all of them at once. This system stitches those sightings together: the moment ANPR reads the plate anywhere in the network, it's logged with a timestamp. Query the plate and get the full path (Camera 1 → Camera 13 → Camera 15) drawn on a map with times. If the plate is already on a watchlist, an alert fires automatically the instant it's seen — no manual query needed.
+**Concrete example of what this solves:** A suspect vehicle is seen on Camera 1 during a crime. Right now, nobody knows it also passed Camera 13 an hour later and Camera 15 after that — each camera system is its own island with nobody watching all of them at once. This system stitches those sightings together: the moment ANPR reads the plate anywhere in the network, it's logged with a timestamp. Query the plate and get the full path (Camera 1 → Camera 13 → Camera 15) drawn on a map with times. If the plate is already on a watchlist, an alert fires automatically the instant it's seen — no manual query needed. **And when there's no legible plate at all** — a distant or low-quality feed, or a witness who only saw "a red car" — the same tracking works off vehicle type and color instead, narrowing the field the way a real investigation would, not pretending to uniquely identify the vehicle (see Section 0b).
 
 **Core objective (official):** Design a secure, scalable, interoperable, cost-effective solution integrating CCTV cameras from 26 Government Departments (currently fragmented, independent systems — mix of analog and IP, cloud and local storage, 7–15+ day retention, cameras up to ~1,000 km apart) into a unified video management and analytics platform.
 
@@ -209,16 +225,22 @@ Remaining step: actually create the Supabase project, run `CREATE EXTENSION IF N
 
 | Field | Notes |
 |---|---|
-| plate_number | OCR output |
-| timestamp | **must be derived from stream PTS, never wall-clock/arrival time** |
+| plate_number | OCR output — **nullable** (0b): not every sighting has a legible plate |
+| vehicle_type | car / motorcycle / bus / truck — from the YOLO vehicle detector, always available |
+| vehicle_color | dominant color extracted from the crop, small named palette (0b) — nullable, unreliable under glare so pair with the thumbnail, not trusted alone |
+| thumbnail_path | saved crop image — the human-checkable fallback when the computed color label might be wrong (0b) |
+| timestamp | **must be derived from stream PTS, never wall-clock/arrival time** — used for within-camera timing only; cross-camera ordering uses `created_at` instead (0a, see detections.py docstring) |
 | camera_id | foreign key to registry |
 | confidence | OCR/detection confidence score |
+
+Every vehicle sighting is recorded now, not just ones with a legible plate (0b) — plate_number/vehicle_color may be null, but vehicle_type and a thumbnail are always captured.
 
 ### Watchlist
 
 | Field | Notes |
 |---|---|
-| plate_number | |
+| plate_number | nullable (0b) — an entry needs plate_number OR (vehicle_type AND vehicle_color), not neither |
+| vehicle_type / vehicle_color | for attribute-based entries when the plate isn't known (0b) — e.g. "red car last seen near cam04" |
 | category | stolen / suspect / blacklisted |
 | source | your own representative dataset — real government DB integration not required |
 | date_added | |
@@ -229,10 +251,11 @@ Remaining step: actually create the Supabase project, run `CREATE EXTENSION IF N
 
 1. **Onboarding** — camera metadata pulled from `/api/ingest`, entered via bulk CSV / manual form / API, stored in registry. **Done.**
 2. **Live viewing** — direct RTSP/ONVIF connection per camera, relayed to browser via HLS. **Done.**
-3. **ANPR detection** — per-frame vehicle detection (YOLO) → plate crop → OCR → confidence score → write to detection store with PTS timestamp. **Exists, needs a rework pass** (Section 0b).
-4. **Watchlist matching** — every new detection checked against watchlist table; match triggers a real-time alert. **Match logic done; real-time delivery to the UI not built** (Section 0b).
-5. **Cross-camera tracking** — given a plate number, query all detection events, order by PTS timestamp, reconstruct the route across cameras. **Done** (`/detections/route/{plate}`).
-6. **GIS visualization** — render camera markers, live alerts, and reconstructed vehicle routes on the Leaflet map. **Camera markers done; route polyline not built yet** (Section 0b).
+3. **ANPR detection** — per-frame vehicle detection (YOLO) → plate crop → OCR → confidence score → write to detection store. Pipeline hardened this session; plate legibility itself is a real, separate problem (0b).
+4. **Vehicle attribute tracking** — every detected vehicle also gets a type + dominant color + thumbnail recorded, whether or not a plate was legible, as a coarse tracking signal that complements plate ANPR. **New, in progress** (0b).
+5. **Watchlist matching** — every new detection checked against the watchlist, on plate (exact) or attributes (coarse, tiered lower). Match triggers a real-time alert. **Plate-match logic done; attribute matching + real-time delivery to the UI not built yet** (0c).
+6. **Cross-camera tracking** — given a plate number OR a type+color combination, query matching detection events, order chronologically (by `created_at` — see Section 6), reconstruct the route/candidate-sightings across cameras. **Plate-based route done** (`/detections/route/{plate}`); **attribute-based search not built yet** (0c).
+7. **GIS visualization** — render camera markers, live alerts, and reconstructed vehicle routes on the Leaflet map. **Camera markers done; route polyline not built yet** (0c).
 
 ---
 

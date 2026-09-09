@@ -1,0 +1,4 @@
+ultralytics==8.3.40
+easyocr==1.7.2
+opencv-python-headless==4.10.0.84
+requests==2.32.3

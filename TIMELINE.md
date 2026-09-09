@@ -11,7 +11,7 @@ This is a two-phase competition: Phase 1 (Sandbox Round) is what this whole time
 
 ## One-Line Pitch
 
-Turns 26 fragmented, department-owned CCTV systems into one searchable network — pull up a plate, see every camera it passed and when, and get auto-alerted if it matches a stolen/wanted/blacklisted watchlist, without touching any department's existing infrastructure.
+Turns 26 fragmented, department-owned CCTV systems into one searchable network — pull up a plate (or, when it's not legible, just a vehicle's type and color), see every camera it passed and when, and get auto-alerted if it matches a stolen/wanted/blacklisted watchlist, without touching any department's existing infrastructure.
 
 ## Explicitly Out of Scope
 
@@ -40,32 +40,37 @@ Fixed today: the bug where only 1–2 of 8 opened camera tiles ever showed video
 
 ---
 
-## Day 1 (Sep 10) — ANPR Pipeline Rework
+## Day 1 (Sep 10) — ANPR Pipeline Rework — done early (Sep 9), plus a major finding
 
-The existing pipeline (`anpr/pipeline.py`) isn't solid enough to trust for the test case yet. Rebuild/harden it:
+Hardened `anpr/pipeline.py` a day ahead of schedule: frame throttling (grab/retrieve so CPU-bound YOLO+EasyOCR doesn't fall behind live video), decoder warm-up frame skip, absolute HLS URLs, crop upscaling before OCR. Verified against 9+ real live cameras.
 
-- Vehicle detection (YOLO) + plate cropping — verify against live cctv.corp8.cloud feeds, not just the bundled `yolov8n.pt` on stock footage
-- OCR (PaddleOCR/EasyOCR) + confidence scoring
-- Store detections via `POST /detections`: plate, **PTS-derived** timestamp, camera ID, confidence — never wall-clock/arrival time (`PLAN.md` Section 8)
-- Handle mixed H.264/H.265 and mixed resolutions per-camera — no fixed-shape batching across cameras
-- Reconnect-with-backoff on the RTSP side, same discipline as the HLS viewer already has
-- Sanity-check output against 2–3 cameras first before scaling to all 30
+**Major finding, not a code bug**: zero legible plates across 150+ real vehicle detections on every camera tested (including the toll plaza and one of the three official test-case cameras). The sandbox streams generic wide-angle surveillance CCTV, not purpose-built ANPR hardware — confirmed by comparing against how Ahmedabad/Gandhinagar's real e-challan system actually works (see `PLAN.md` Section 0b). This led directly to Day 2's expanded scope below — don't be surprised the plan changed here.
 
-## Day 2 (Sep 11) — Watchlist Alerts + Route-on-Map
+## Day 2 (Sep 11) — Vehicle Attribute Tracking + Watchlist Alerts + Route-on-Map
 
-Two independent, parallelizable gaps, both already have backend groundwork:
+Expanded scope (see `PLAN.md` Section 0b for the full reasoning): plate ANPR alone isn't enough given the sandbox's camera quality, so cross-camera tracking now also works off vehicle type + color, complementing exact-plate matches rather than replacing them.
 
-- **Real-time alerts** (required, not optional — the official own-feed demo checklist explicitly calls for "watchlist matching, alert generation"): watchlist match-on-detection logic already exists (`watchlist.py`, wired into `detections.py`) but only logs server-side. Add a `GET /watchlist/alerts/recent` endpoint and short-poll it from the Dashboard — good enough to demo, no websocket layer needed at this scale.
-- **Route on the GIS map**: `/detections/route/{plate}` already returns the right data (used by the Dashboard's text-based route search). Add a `Polyline` + numbered stop markers to the Leaflet map in `Registry.jsx` (or a dedicated tracking view) so the official test case — plate seen on cam01 → cam13 → cam15 — renders visually, not just as a list.
-- Seed the representative watchlist dataset for the demo plates you'll use.
+**Core (must land for this pivot to be real and demoable):**
+- Schema: nullable `plate_number` on `Detection`/`WatchlistEntry`; add `vehicle_type`, `vehicle_color` to both; add `thumbnail_path` to `Detection`. No Alembic in this project — manually `DROP TABLE detections, watchlist CASCADE;` on the local dev DB so `create_all` recreates them with the new columns (both tables are still empty of real data, so no loss).
+- New `anpr/color.py`: dominant-color extraction from a vehicle crop (mask out glare/shadow pixels first, bucket into a small named palette). Document its night/artificial-lighting limitation plainly — this is exactly why the thumbnail matters.
+- `anpr/pipeline.py`: record **every** detected vehicle now (type + color always, plate when legible, thumbnail always) via multipart upload to the backend — mirrors how plate detections already worked, but no longer silently drops vehicles with no legible plate. Extend the existing dedup-cooldown pattern to key on `(camera_id, vehicle_type, vehicle_color)` when there's no plate.
+- Backend: generalize watchlist matching to check plate-based **and** attribute-based entries (tiered: exact plate > attributes-only); add `GET /detections/search?vehicle_type=&vehicle_color=&since=&until=` for candidate sightings by attributes; thumbnail storage + serving.
+- **Real-time alerts** (required, not optional — the official own-feed demo checklist explicitly calls for "watchlist matching, alert generation"): `GET /watchlist/alerts/recent`, short-polled from the Dashboard, surfacing both plate and attribute matches with a clear tier label — no websocket layer needed at this scale.
+- Minimal frontend: attribute search form (type + color) next to the existing plate search, showing thumbnails + tier badges; a minimal watchlist-entry form (plate OR type+color) — none exists in the UI yet.
+- **Route on the GIS map**: `/detections/route/{plate}` already returns the right data (ordered by `created_at`, fixed this session). Add a `Polyline` + numbered stop markers to the Leaflet map so the official test case — cam01 → cam13 → cam15 — renders visually, not just as a list. Support attribute-based candidate routes too, not just plate routes.
+- Seed the representative watchlist dataset (both plate-based and attribute-based entries) for the demo.
+
+**Stretch (only if core is solid with time still left):**
+- GIS-plausibility ranking for attribute-based candidate sightings — use camera lat/lng (already in the registry) to flag/reject matches that would require impossible travel speed between two cameras.
+- Partial/low-confidence plate tier — keep near-miss OCR reads instead of today's all-or-nothing regex match, and combine them with type+color for a stronger signal than either alone.
 
 ## Day 3 (Sep 12) — End-to-End Integration Test
 
-- Full test-case rehearsal: onboard feeds → live monitoring → ANPR on a real plate → watchlist alert fires → route renders on the GIS map
+- Full test-case rehearsal: onboard feeds → live monitoring → vehicle detected (plate if legible, else type+color+thumbnail) → watchlist alert fires (exact or attribute-tiered) → route renders on the GIS map
 - Bug fixes from whatever the rehearsal surfaces
 - Stress-test reconnect/backoff by deliberately restarting a feed mid-test
 - Confirm behavior across a scene discontinuity (loop point) — long-lived ANPR state must recover from the hard cut, not assume continuity
-- If ANPR or route-on-map isn't reliable yet, this is the day to cut scope (e.g., ship the text-based route view if the polyline isn't stable) rather than carry risk into Day 4
+- If ANPR, attribute tracking, or route-on-map isn't reliable yet, this is the day to cut scope (e.g., ship the text-based route view if the polyline isn't stable, or drop the stretch items from Day 2) rather than carry risk into Day 4
 
 ## Day 4 (Sep 13) — Documentation
 
@@ -75,9 +80,9 @@ Two independent, parallelizable gaps, both already have backend groundwork:
 
 ## Day 5 (Sep 14) — Demo Recording + Hardening Buffer
 
-- Own-feed demo (2–3 min): onboarding + live/recorded viewing + ANPR — record cleanly
+- Own-feed demo (2–3 min): onboarding + live/recorded viewing + ANPR + watchlist match + alert — record cleanly. Worth showing the attribute-based (type+color) tracking too, since it's a genuine differentiator (bonus criteria: "advanced cross-camera tracking," "additional reliable analytics beyond mandatory ANPR")
 - Government-feed live demo: onboarding + viewing + analytics output, screen-recorded
-- Output report: detected plates + timestamps (CSV/table export — `GapAnalysis.jsx` already has a JSON-export pattern to copy)
+- Output report: detected plates (or type+color when no plate was legible) + timestamps (CSV/table export — `GapAnalysis.jsx` already has a JSON-export pattern to copy)
 - Re-record if anything looks like a mockup or scripted fake — evaluators explicitly reject non-functional demos
 - Any remaining slack today only: RBAC/audit hardening, edge-case passes, additional analytics — never at the expense of the mandatory items above
 
