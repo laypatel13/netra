@@ -1,7 +1,7 @@
 """
 Core data model for netra.
 
-Three tables, matching plan.md Section 6:
+Three tables, matching PLAN.md Section 6:
 
 1. Camera        — Model 1 registry. Metadata only, no video. camera_id is
                     sourced from the Sentinel /api/ingest catalogue, never
@@ -10,7 +10,7 @@ Three tables, matching plan.md Section 6:
                     watchlist/alert path and the cross-camera tracking path.
                     `timestamp_ms` MUST be derived from stream PTS
                     (CAP_PROP_POS_MSEC or equivalent) — never wall-clock /
-                    frame-arrival time. See plan.md Section 8.
+                    frame-arrival time. See PLAN.md Section 8.
 3. Watchlist     — Representative watchlist DB. Real VAHAN/eGujCop/etc.
                     integration is explicitly out of scope for this build.
 """
@@ -98,7 +98,7 @@ class WatchlistEntry(Base):
 class AuditLog(Base):
     """
     Day 2 — basic audit trail for registry actions. Supports the "enhanced
-    cybersecurity/RBAC/auditability" bonus-consideration item in plan.md
+    cybersecurity/RBAC/auditability" bonus-consideration item in PLAN.md
     Section 11. `actor` comes from the (unauthenticated) X-Actor header —
     this is a demonstration of the trail existing, not real accountability
     until it sits behind real auth.

@@ -4,7 +4,7 @@ Minimal RBAC — header-based role/department scoping.
 Intentionally lightweight for hackathon speed, not a production auth system.
 Swap for real JWT/session auth before anything resembling production. This
 exists to demonstrate the "enhanced cybersecurity/RBAC/auditability" bonus
-consideration item from plan.md Section 11, not to be a hardened auth layer.
+consideration item from PLAN.md Section 11, not to be a hardened auth layer.
 
 Roles:
   admin      — can onboard/bulk-onboard/sync status, read audit log

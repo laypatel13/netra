@@ -3,18 +3,24 @@ import Hls from "hls.js";
 
 /**
  * Reusable video player component with HLS → progressive MP4 fallback,
- * plus reconnect-with-backoff (plan.md Section 8).
+ * plus reconnect-with-backoff (PLAN.md Section 8).
  *
  * Playback priority:
  *   1. HLS via hls.js (if src provided and Hls.isSupported())
  *   2. Native HLS (Safari — if src provided)
- *   3. Progressive MP4 (mp4Src — range-request streaming, the corp8.cloud fallback)
+ *   3. Progressive MP4 (mp4Src), only when the catalogue actually provides one
+ *   4. If none of the above work, keep retrying HLS itself with capped
+ *      backoff — this is the normal path for cctv.corp8.cloud, which has no
+ *      progressive-MP4 endpoint. A join failure is never terminal (PLAN.md
+ *      Section 8): reconnect forever, don't give up on a tile permanently.
  *
  * Props:
- *   src        — HLS playlist URL
- *   mp4Src     — Progressive MP4 stream URL (e.g. https://live.corp8.cloud/stream/1)
- *   cameraId   — displayed in the tile overlay
- *   reconnect  — { initial_ms, max_ms, multiplier }
+ *   src           — HLS playlist URL
+ *   mp4Src        — Progressive MP4 stream URL (e.g. https://live.corp8.cloud/stream/1)
+ *   cameraId      — displayed in the tile overlay
+ *   reconnect     — { initial_ms, max_ms, multiplier }
+ *   startDelayMs  — delay before the first connection attempt, for staggering
+ *                   a grid of tiles that mount at the same time
  */
 
 const STATUS = {
@@ -36,6 +42,7 @@ export default function HlsPlayer({
   mp4Src,
   cameraId = "",
   reconnect = { initial_ms: 2000, max_ms: 30000, multiplier: 2 },
+  startDelayMs = 0,
 }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
@@ -67,8 +74,18 @@ export default function HlsPlayer({
   /** Try progressive MP4 as fallback */
   const connectMp4 = useCallback(() => {
     const video = videoRef.current;
-    if (!mp4Src || !video) {
+    if (!video) {
+      // Element is gone (component unmounting) — nothing left to retry.
       setStatus(STATUS.FAILED);
+      return;
+    }
+    if (!mp4Src) {
+      // No fallback stream available — keep retrying HLS with backoff rather
+      // than giving up permanently (PLAN.md Section 8: reconnect forever with
+      // capped backoff, never treat a transient join failure as terminal).
+      setStatus(STATUS.RECONNECTING);
+      hlsFailedRef.current = false;
+      scheduleRetry(connect);
       return;
     }
     setStatus(STATUS.CONNECTING);
@@ -158,7 +175,7 @@ export default function HlsPlayer({
             connectMp4();
             break;
           case Hls.ErrorTypes.MEDIA_ERROR:
-            // Decoder warnings on join are normal (plan.md Section 8)
+            // Decoder warnings on join are normal (PLAN.md Section 8)
             hls.recoverMediaError();
             break;
           default:
@@ -173,9 +190,16 @@ export default function HlsPlayer({
   }, [src, reconnect.initial_ms, cleanup, connectMp4]);
 
   useEffect(() => {
-    connect();
-    return cleanup;
-  }, [connect, cleanup]);
+    // Stagger the very first connection per tile so opening a grid of many
+    // cameras at once doesn't slam the shared authenticated session with a
+    // burst of simultaneous first-segment fetches (PLAN.md Section 8: "pace
+    // load"). Reconnects after that use the normal backoff timer, not this.
+    const startTimeout = setTimeout(connect, startDelayMs);
+    return () => {
+      clearTimeout(startTimeout);
+      cleanup();
+    };
+  }, [connect, cleanup, startDelayMs]);
 
   return (
     <div

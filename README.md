@@ -6,14 +6,14 @@ Unified CCTV registry + live viewing/ANPR platform built for the Sentinel Gujara
 
 **One-line pitch:** Turns 26 fragmented, department-owned CCTV systems into one searchable network — pull up a vehicle's plate, see every camera it passed and when, and get auto-alerted if it matches a stolen/wanted/blacklisted watchlist, without touching any department's existing infrastructure.
 
-Full project context, architecture, endpoints, tech stack, and rules of engagement live in [`plan.md`](./plan.md). Day-by-day build schedule lives in [`timeline.md`](./timeline.md). **Read `plan.md` before writing any code** — it has the mandatory model choice, the Sentinel sandbox protocol rules (RTSP/TCP, PTS timing, reconnect behavior), and an explicit "do not" list.
+Full project context, architecture, endpoints, tech stack, and rules of engagement live in [`PLAN.md`](./PLAN.md). Day-by-day build schedule lives in [`TIMELINE.md`](./TIMELINE.md). **Read `PLAN.md` before writing any code** — it has the mandatory model choice, the Sentinel sandbox protocol rules (RTSP/TCP, PTS timing, reconnect behavior), and an explicit "do not" list.
 
 ## Structure
 
 ```
 netra/
-  plan.md              # full project context — read first
-  timeline.md          # day-by-day schedule
+  PLAN.md              # full project context — read first
+  TIMELINE.md          # day-by-day schedule
   backend/             # FastAPI + PostgreSQL/PostGIS
     app/
       main.py
@@ -63,4 +63,4 @@ pip install opencv-python requests
 python test_feed_connection.py --host <sentinel-sandbox-host>
 python test_feed_connection.py --host live.corp8.cloud
 ```
-This forces RTSP over TCP, reads timing from PTS (not wall-clock), and reconnects with backoff — matching the mandatory protocol rules in `plan.md` Section 8. If this script doesn't cleanly connect and hold a stream today, that's the top priority to fix before building anything else.
+This forces RTSP over TCP, reads timing from PTS (not wall-clock), and reconnects with backoff — matching the mandatory protocol rules in `PLAN.md` Section 8. If this script doesn't cleanly connect and hold a stream today, that's the top priority to fix before building anything else.

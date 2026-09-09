@@ -128,15 +128,29 @@ async def onboard_cameras_csv(
         except (ValueError, KeyError):
             skipped += 1
             continue
+
+        camera_type = row.get("camera_type") or "ip"
+        connectivity_status = row.get("connectivity_status") or "unknown"
+        storage_type = row.get("storage_type") or None
+        if (
+            camera_type not in ("analog", "ip")
+            or connectivity_status not in ("online", "offline", "unknown")
+            or (storage_type is not None and storage_type not in ("cloud", "local"))
+        ):
+            # Bad enum value would otherwise 500 at the DB layer mid-batch —
+            # skip the row instead of failing the whole import.
+            skipped += 1
+            continue
+
         db_camera = models.Camera(
             camera_id=row["camera_id"],
             name=row.get("name") or None,
             location=point,
             department=row["department"],
-            camera_type=row.get("camera_type") or "ip",
+            camera_type=camera_type,
             ownership=row.get("ownership") or None,
-            connectivity_status=row.get("connectivity_status") or "unknown",
-            storage_type=row.get("storage_type") or None,
+            connectivity_status=connectivity_status,
+            storage_type=storage_type,
             retention_days=int(row["retention_days"]) if row.get("retention_days") else None,
         )
         db.add(db_camera)
@@ -185,9 +199,19 @@ def sync_camera_status(
 
     catalogue = data if isinstance(data, list) else data.get("cameras", [])
     updated = 0
+    skipped_no_field = 0
     for entry in catalogue:
         cam_id = str(entry.get("id", entry.get("camera_id", "")))
-        is_live = entry.get("live", entry.get("live_status", False))
+        # `live`/`live_status` isn't always present in the catalogue response
+        # (observed missing entirely from cctv.corp8.cloud's /cameras.json).
+        # A missing field means "the upstream API didn't tell us" — treating
+        # that the same as "confirmed offline" would silently overwrite real
+        # status with a false negative, so leave the camera's status alone
+        # when the field simply isn't there.
+        if "live" not in entry and "live_status" not in entry:
+            skipped_no_field += 1
+            continue
+        is_live = entry.get("live", entry.get("live_status"))
         db_cam = db.query(models.Camera).filter_by(camera_id=cam_id).first()
         if db_cam:
             db_cam.connectivity_status = (
@@ -197,9 +221,14 @@ def sync_camera_status(
     db.commit()
     log_action(
         db, actor, "camera.status_sync", target_type="host", target_id=h,
-        details=f"checked {len(catalogue)}, updated {updated}",
+        details=f"checked {len(catalogue)}, updated {updated}, skipped {skipped_no_field} (no live field)",
     )
-    return {"host": h, "cameras_checked": len(catalogue), "cameras_updated": updated}
+    return {
+        "host": h,
+        "cameras_checked": len(catalogue),
+        "cameras_updated": updated,
+        "cameras_skipped_no_live_field": skipped_no_field,
+    }
 
 
 @router.get("", response_model=List[schemas.CameraRead], summary="List registered cameras with RBAC scoping")

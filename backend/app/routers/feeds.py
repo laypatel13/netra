@@ -33,7 +33,7 @@ from fastapi.responses import StreamingResponse
 router = APIRouter(prefix="/feeds", tags=["feeds"])
 logger = logging.getLogger("netra.feeds")
 
-# --- Reconnect-with-backoff constants (plan.md Section 8) ---
+# --- Reconnect-with-backoff constants (PLAN.md Section 8) ---
 BACKOFF_INITIAL_MS = 2000
 BACKOFF_MAX_MS = 30000
 BACKOFF_MULTIPLIER = 2.0
@@ -224,7 +224,12 @@ def _resolve_stream_urls(host: str, camera_entry: dict) -> dict:
         hls = f"/feeds/{cam_id}/hls-proxy/index.m3u8"
         rtsp = f"rtsp://{auth_prefix}@{direct_ip}:8554/stream/{cam_id}"
         whep = f"http://{auth_prefix}@{direct_ip}:8889/stream/{cam_id}/whep"
-        mp4 = f"https://{cctv_host}/{cam_id}"  # potential progressive fallback
+        # No progressive-MP4 endpoint exists on cctv.corp8.cloud (Integrator's Guide
+        # only documents HLS/RTSP/WHEP) and a raw https://<host>/<id> hit from the
+        # browser has no session cookie anyway — it would always 401/404. Don't
+        # hand the frontend a fallback URL that can never work; HlsPlayer instead
+        # retries HLS itself with backoff, per PLAN.md Section 8.
+        mp4 = None
     else:
         # Legacy format (kept for safety but shouldn't be reached)
         scheme = "https" if "corp8.cloud" in host else "http"

@@ -2,7 +2,7 @@
 Day 1 validation script — confirm we can connect to and hold a stream from
 cctv.corp8.cloud before building anything else on top of it.
 
-Implements the mandatory protocol rules from plan.md Section 8:
+Implements the mandatory protocol rules from PLAN.md Section 8:
   - RTSP forced over TCP (never UDP)
   - RTSP/WebRTC URLs include email:password@ authentication
   - Timing read from PTS (CAP_PROP_POS_MSEC), never wall-clock/arrival time

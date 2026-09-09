@@ -5,7 +5,7 @@ This is the shared source of truth consumed by both the watchlist/alert path
 (watchlist.py) and the GIS route-reconstruction path (this file's /route
 endpoint). The ANPR pipeline (YOLO + OCR) should POST here for every plate it
 reads, with a PTS-derived timestamp_ms — never wall-clock time. See
-plan.md Section 8 for why.
+PLAN.md Section 8 for why.
 """
 from typing import List
 

@@ -181,13 +181,14 @@ export default function LiveViewer() {
             gap: 12,
           }}
         >
-          {activeCameras.map((cam) => (
+          {activeCameras.map((cam, i) => (
             <div key={cam.camera_id}>
               <HlsPlayer
                 src={cam.streams?.hls?.startsWith("/") ? `/api${cam.streams.hls}` : cam.streams?.hls}
                 mp4Src={cam.streams?.mp4}
                 cameraId={`${cam.name || cam.camera_id} (${cam.source_host})`}
                 reconnect={reconnectConfig}
+                startDelayMs={i * 250}
               />
               <div style={{ fontSize: 11, color: "#666", marginTop: 4, padding: "0 4px" }}>
                 {cam.codec} · {cam.resolution} · {cam.source_host}

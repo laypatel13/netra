@@ -2,7 +2,7 @@
 netra — FastAPI entrypoint.
 
 Model 1 (registry/GIS) + Model 2 (live viewing/ANPR/watchlist/tracking).
-See plan.md at the repo root for full context before extending this.
+See PLAN.md at the repo root for full context before extending this.
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,7 +45,7 @@ app = FastAPI(
         "matches a stolen/wanted/blacklisted watchlist.\n\n"
         "- **Model 1**: Centralised CCTV Registry & GIS Foundation (mandatory)\n"
         "- **Model 2**: Unified Viewing & Selective Analytics (RTSP/WHEP/HLS + ANPR)\n\n"
-        "See the [plan.md](https://github.com/) in the repo root for full architecture context."
+        "See the [PLAN.md](https://github.com/) in the repo root for full architecture context."
     ),
     version="0.2.0",
     contact={"name": "Team Netra", "url": "https://sentinel.gujarat.gov.in"},
@@ -55,7 +55,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten before submission — see plan.md RBAC note
+    allow_origins=["*"],  # tighten before submission — see PLAN.md RBAC note
     allow_methods=["*"],
     allow_headers=["*"],
 )

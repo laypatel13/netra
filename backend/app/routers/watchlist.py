@@ -2,7 +2,7 @@
 Watchlist management and match-checking.
 
 Uses a representative dataset only — no real VAHAN/SARTHI/eGujCop/AFIS/NAFIS
-integration in this build (see plan.md Section 4 and Section 9). That's
+integration in this build (see PLAN.md Section 4 and Section 9). That's
 explicitly permitted by the official rules; only mention integration
 readiness for those systems in the HLD document, don't build it.
 """

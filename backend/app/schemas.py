@@ -1,6 +1,6 @@
 """Pydantic schemas — request/response shapes for the API layer."""
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -14,10 +14,10 @@ class CameraCreate(BaseModel):
     latitude: float
     longitude: float
     department: str
-    camera_type: str  # "analog" | "ip"
+    camera_type: Literal["analog", "ip"]
     ownership: Optional[str] = None
-    connectivity_status: Optional[str] = "unknown"
-    storage_type: Optional[str] = None
+    connectivity_status: Optional[Literal["online", "offline", "unknown"]] = "unknown"
+    storage_type: Optional[Literal["cloud", "local"]] = None
     retention_days: Optional[int] = None
 
 
@@ -69,7 +69,7 @@ class VehicleRoute(BaseModel):
 
 class WatchlistCreate(BaseModel):
     plate_number: str
-    category: str  # "stolen" | "suspect" | "blacklisted"
+    category: Literal["stolen", "suspect", "blacklisted"]
     source: Optional[str] = "representative-dataset"
 
 
