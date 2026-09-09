@@ -3,6 +3,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Registry from "./pages/Registry.jsx";
 import LiveViewer from "./pages/LiveViewer.jsx";
 import GapAnalysis from "./pages/GapAnalysis.jsx";
+import Watchlist from "./pages/Watchlist.jsx";
 
 const linkStyle = ({ isActive }) => ({
   marginRight: 16,
@@ -31,6 +32,9 @@ export default function App() {
           <NavLink to="/gap-analysis" style={linkStyle}>
             Gap Analysis
           </NavLink>
+          <NavLink to="/watchlist" style={linkStyle}>
+            Watchlist
+          </NavLink>
         </nav>
       </header>
 
@@ -39,6 +43,7 @@ export default function App() {
         <Route path="/registry" element={<Registry />} />
         <Route path="/live" element={<LiveViewer />} />
         <Route path="/gap-analysis" element={<GapAnalysis />} />
+        <Route path="/watchlist" element={<Watchlist />} />
       </Routes>
     </div>
   );

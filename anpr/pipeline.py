@@ -38,11 +38,15 @@ Design notes:
     all 30 at once.
   - No fixed-shape batching across cameras — each camera's frames are
     processed independently at their own native resolution/codec/frame rate.
-  - De-duplication: the same plate seen on consecutive frames of the same
-    camera isn't re-reported every frame — only on first sighting or after
-    a cooldown window. Cooldown uses wall-clock time deliberately (it's
-    bookkeeping for how often *we* re-report), while every detection's
+  - De-duplication: the same plate — or, with no legible plate, the same
+    (vehicle_type, vehicle_color) combination — seen on consecutive frames
+    of the same camera isn't re-reported every frame, only on first sighting
+    or after a cooldown window. Cooldown uses wall-clock time deliberately
+    (it's bookkeeping for how often *we* re-report), while every detection's
     stored timestamp_ms stays PTS-derived.
+  - Every detected vehicle is recorded now, not just ones with a legible
+    plate (PLAN.md Section 0b) — vehicle_type + a thumbnail are always
+    captured; plate_number and vehicle_color are populated when available.
 """
 import argparse
 import logging
@@ -54,6 +58,7 @@ from typing import Optional
 import cv2
 import requests
 
+from color import dominant_color
 from detector import VehicleDetector
 from plate_reader import PlateReader
 
@@ -117,20 +122,39 @@ def open_capture(camera: dict, backend_url: str) -> Optional[cv2.VideoCapture]:
 
 
 def post_detection(
-    backend_url: str, camera_id: str, plate: str, timestamp_ms: float,
-    confidence: float, dry_run: bool,
+    backend_url: str, camera_id: str, timestamp_ms: float, confidence: float,
+    dry_run: bool, thumbnail_jpeg: bytes,
+    plate: Optional[str] = None, vehicle_type: Optional[str] = None,
+    vehicle_color: Optional[str] = None,
 ) -> None:
-    payload = {
-        "plate_number": plate,
-        "timestamp_ms": timestamp_ms,
+    """
+    Every detected vehicle gets POSTed now, not just ones with a legible
+    plate (PLAN.md Section 0b) — plate/vehicle_color may be None.
+    Multipart upload (fields + JPEG thumbnail) instead of pure JSON, same
+    pattern already used by the backend's /cameras/bulk-csv endpoint.
+    """
+    fields = {
         "camera_id": camera_id,
-        "confidence": confidence,
+        "timestamp_ms": str(timestamp_ms),
+        "confidence": str(confidence),
     }
+    if plate:
+        fields["plate_number"] = plate
+    if vehicle_type:
+        fields["vehicle_type"] = vehicle_type
+    if vehicle_color:
+        fields["vehicle_color"] = vehicle_color
+
     if dry_run:
-        log.info("[DRY RUN] would POST %s", payload)
+        log.info("[DRY RUN] would POST %s (+ %d-byte thumbnail)", fields, len(thumbnail_jpeg))
         return
     try:
-        resp = requests.post(f"{backend_url}/detections", json=payload, timeout=5)
+        resp = requests.post(
+            f"{backend_url}/detections",
+            data=fields,
+            files={"thumbnail": ("thumb.jpg", thumbnail_jpeg, "image/jpeg")},
+            timeout=5,
+        )
         if resp.status_code == 404:
             log.warning(
                 "Camera %s not onboarded in the registry — onboard it before running ANPR against it",
@@ -148,7 +172,12 @@ def process_camera(
 ) -> None:
     camera_id = camera["camera_id"]
     backoff = backoff_cfg["initial_ms"] / 1000.0
-    last_seen: dict[str, float] = {}  # plate -> wall-clock time last reported (cooldown bookkeeping only)
+    # Two separate cooldown maps: plate-keyed (precise) and attribute-keyed
+    # (camera_id is implicit — this dict is already per-camera) for vehicles
+    # with no legible plate. Both are wall-clock bookkeeping for how often
+    # *we* re-report, never used as the stored timestamp (PLAN.md Section 8).
+    last_seen_plate: dict[str, float] = {}
+    last_seen_attrs: dict[tuple[str, str], float] = {}  # (vehicle_type, vehicle_color) -> last reported
     frames_processed = 0
 
     while max_frames is None or frames_processed < max_frames:
@@ -187,21 +216,49 @@ def process_camera(
                 crop = frame[vbox.y1:vbox.y2, vbox.x1:vbox.x2]
                 if crop.size == 0:
                     continue
+
+                # Every detected vehicle is recorded now, not just ones with
+                # a legible plate (PLAN.md Section 0b) — most cctv.corp8.cloud
+                # footage doesn't yield one. Plate stays the precise signal
+                # when available; type+color is the fallback that keeps the
+                # vehicle traceable either way.
                 reading = reader.read(crop)
-                if reading is None:
-                    continue
-
+                color = dominant_color(crop)
                 now = time.time()
-                cooldown_ok = (
-                    reading.text not in last_seen or (now - last_seen[reading.text]) > DEDUP_COOLDOWN_S
-                )
-                if not cooldown_ok:
-                    continue
-                last_seen[reading.text] = now
 
-                combined_confidence = round((vbox.confidence + reading.confidence) / 2, 3)
-                log.info("Camera %s: plate %s (conf %.2f)", camera_id, reading.text, combined_confidence)
-                post_detection(backend_url, camera_id, reading.text, pts_ms, combined_confidence, dry_run)
+                if reading is not None:
+                    cooldown_ok = (
+                        reading.text not in last_seen_plate
+                        or (now - last_seen_plate[reading.text]) > DEDUP_COOLDOWN_S
+                    )
+                    if not cooldown_ok:
+                        continue
+                    last_seen_plate[reading.text] = now
+                    combined_confidence = round((vbox.confidence + reading.confidence) / 2, 3)
+                    log.info("Camera %s: plate %s (conf %.2f)", camera_id, reading.text, combined_confidence)
+                else:
+                    attr_key = (vbox.label, color.name)
+                    cooldown_ok = (
+                        attr_key not in last_seen_attrs
+                        or (now - last_seen_attrs[attr_key]) > DEDUP_COOLDOWN_S
+                    )
+                    if not cooldown_ok:
+                        continue
+                    last_seen_attrs[attr_key] = now
+                    combined_confidence = round(vbox.confidence, 3)
+                    log.info("Camera %s: %s %s, no legible plate (conf %.2f)", camera_id, color.name, vbox.label, combined_confidence)
+
+                ok, encoded = cv2.imencode(".jpg", crop)
+                if not ok:
+                    continue
+
+                post_detection(
+                    backend_url, camera_id, pts_ms, combined_confidence, dry_run,
+                    thumbnail_jpeg=encoded.tobytes(),
+                    plate=reading.text if reading else None,
+                    vehicle_type=vbox.label,
+                    vehicle_color=color.name if color.name != "unknown" else None,
+                )
 
         cap.release()
 

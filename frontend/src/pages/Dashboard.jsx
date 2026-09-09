@@ -10,11 +10,18 @@ const PREVIEW_TILE_COUNT = 4;
  * diagram. Pulls together:
  *   - coverage summary (GET /cameras/gap-analysis)
  *   - a small live preview grid (GET /feeds/catalogue)
- *   - plate search -> GET /detections/route/{plate} for the route view
- *   - watchlist size (GET /watchlist) as a stand-in for the Day 5 alerts feed
+ *   - plate or vehicle-description search -> GET /detections/route/{plate}
+ *     or /detections/search for the route/candidate-sightings view
+ *   - watchlist size (GET /watchlist) — full management + live alerts feed
+ *     lives on the Watchlist page
  */
+const VEHICLE_TYPES = ["car", "motorcycle", "bus", "truck"];
+
 export default function Dashboard() {
+  const [searchMode, setSearchMode] = useState("plate"); // "plate" | "attributes"
   const [plate, setPlate] = useState("");
+  const [vehicleType, setVehicleType] = useState(VEHICLE_TYPES[0]);
+  const [vehicleColor, setVehicleColor] = useState("");
   const [route, setRoute] = useState(null);
   const [routeError, setRouteError] = useState(null);
 
@@ -47,14 +54,22 @@ export default function Dashboard() {
       .catch(() => setWatchlistCount(null));
   }, []);
 
-  async function searchPlate(e) {
+  async function searchRoute(e) {
     e.preventDefault();
     setRouteError(null);
     setRoute(null);
     try {
-      const res = await fetch(`/api/detections/route/${encodeURIComponent(plate)}`);
+      const url =
+        searchMode === "plate"
+          ? `/api/detections/route/${encodeURIComponent(plate)}`
+          : `/api/detections/search?vehicle_type=${encodeURIComponent(vehicleType)}&vehicle_color=${encodeURIComponent(vehicleColor)}`;
+      const res = await fetch(url);
       if (!res.ok) {
-        setRouteError(`No route found for "${plate}"`);
+        setRouteError(
+          searchMode === "plate"
+            ? `No route found for "${plate}"`
+            : `No sightings found for ${vehicleColor} ${vehicleType}`
+        );
         return;
       }
       setRoute(await res.json());
@@ -136,39 +151,98 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Plate search / route trace */}
-      <h3 style={{ marginBottom: 8 }}>Trace a plate</h3>
-      <form onSubmit={searchPlate} style={{ marginBottom: 16 }}>
-        <input
-          value={plate}
-          onChange={(e) => setPlate(e.target.value)}
-          placeholder="Search by plate number"
-          style={{ padding: 8, marginRight: 8 }}
-        />
+      {/* Plate / attribute search / route trace */}
+      <h3 style={{ marginBottom: 8 }}>Trace a vehicle</h3>
+      <form onSubmit={searchRoute} style={{ marginBottom: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={searchMode} onChange={(e) => setSearchMode(e.target.value)} style={{ padding: 8 }}>
+          <option value="plate">By plate number</option>
+          <option value="attributes">By vehicle description (no plate known)</option>
+        </select>
+
+        {searchMode === "plate" ? (
+          <input
+            value={plate}
+            onChange={(e) => setPlate(e.target.value)}
+            placeholder="Search by plate number"
+            style={{ padding: 8 }}
+          />
+        ) : (
+          <>
+            <select value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} style={{ padding: 8 }}>
+              {VEHICLE_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <input
+              value={vehicleColor}
+              onChange={(e) => setVehicleColor(e.target.value)}
+              placeholder="Color (e.g. red)"
+              style={{ padding: 8 }}
+            />
+          </>
+        )}
+
         <button type="submit" style={{ padding: 8 }}>
           Trace route
         </button>
       </form>
+      {searchMode === "attributes" && (
+        <p style={{ color: "#888", fontSize: 12, marginTop: 0, marginBottom: 16 }}>
+          A narrowing tool, not identification — other vehicles may share the same type/color.
+          Cross-check against the thumbnails below.
+        </p>
+      )}
 
       {routeError && <p style={{ color: "crimson" }}>{routeError}</p>}
 
       {route && (
-        <div>
-          <h4>Route for {route.plate_number}</h4>
-          <ol>
+        <div style={{ marginBottom: 16 }}>
+          <h4>{route.plate_number ? `Route for ${route.plate_number}` : `Candidate sightings: ${route.query}`}</h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {route.stops.map((stop, i) => (
-              <li key={i}>
-                Camera {stop.camera_id} — pts {stop.timestamp_ms.toFixed(0)}ms — confidence{" "}
-                {(stop.confidence * 100).toFixed(0)}%
-              </li>
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  gap: 12,
+                  alignItems: "center",
+                  background: "#1e1e2e",
+                  border: "1px solid #333",
+                  borderRadius: 8,
+                  padding: 10,
+                }}
+              >
+                <div style={{ width: 24, textAlign: "center", color: "#666", fontSize: 13 }}>{i + 1}</div>
+                {stop.thumbnail_url && (
+                  <img
+                    src={`/api${stop.thumbnail_url}`}
+                    alt=""
+                    style={{ width: 70, height: 52, objectFit: "cover", borderRadius: 4 }}
+                  />
+                )}
+                <div style={{ fontSize: 13 }}>
+                  Camera <strong>{stop.camera_id}</strong> — pts {stop.timestamp_ms.toFixed(0)}ms — confidence{" "}
+                  {(stop.confidence * 100).toFixed(0)}%
+                  {stop.vehicle_type && (
+                    <>
+                      {" — "}
+                      {stop.vehicle_color} {stop.vehicle_type}
+                    </>
+                  )}
+                </div>
+              </div>
             ))}
-          </ol>
+          </div>
+          <p style={{ marginTop: 8 }}>
+            <Link to="/registry" style={{ fontSize: 13, color: "#60a5fa" }}>
+              View this route on the GIS map →
+            </Link>
+          </p>
         </div>
       )}
 
       <p style={{ color: "#666", marginTop: 16, fontSize: 13 }}>
-        Real-time watchlist alert feed lands here on Day 5 — for now, check a plate manually
-        via <code>GET /watchlist/check/&lt;plate&gt;</code>.
+        <Link to="/watchlist" style={{ color: "#60a5fa" }}>Manage the watchlist and see the live alerts feed →</Link>
       </p>
     </div>
   );

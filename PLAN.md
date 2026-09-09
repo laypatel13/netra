@@ -22,15 +22,15 @@ This document is the single source of truth for context, architecture, endpoints
 | Backend skeleton (FastAPI + SQLAlchemy + GeoAlchemy2) | Done |
 | Database: Supabase (primary) + local Docker Postgres/PostGIS (dev fallback) | Wired — `DATABASE_URL` env var switches between them, `Base.metadata.create_all()` auto-creates schema on either. Not yet pointed at a live Supabase project — see Section 5a. |
 | Camera registry (manual / bulk JSON / bulk CSV onboarding, RBAC, audit log) | Done |
-| GIS map (Leaflet, department/status filters) | Done — camera markers only, no route polyline yet (see Gaps) |
+| GIS map (Leaflet, department/status filters) | Done, **plus route-on-map** (polyline + numbered stop markers with thumbnails) |
 | Gap-analysis report (per-department coverage, stale cameras, missing depts) | Done, has its own page (`/gap-analysis`) and a summary strip on the Dashboard |
 | Feed catalogue proxy (authenticated HLS via backend, direct RTSP/WHEP) | Done |
 | Live viewer (multi-camera HLS grid with reconnect-with-backoff) | Done — was silently failing to keep more than 1–2 tiles alive; **fixed this session**, see Section 0a |
-| Unified control room Dashboard | Was a bare plate-search stub; **rebuilt this session** into a real control room (coverage summary, live preview grid, plate search) |
-| ANPR pipeline (YOLO detect + OCR + PTS timestamp + POST /detections) | Hardened this session (frame throttling, decoder warm-up skip, crop upscaling, absolute HLS URLs) — but see 0c: plate legibility itself is a real, separate problem |
-| Vehicle attribute tracking (type + color, complementing plate ANPR) | **New, in progress** — see 0c. Not yet implemented: nullable plate on Detection/Watchlist, color extraction, thumbnail capture, attribute search/matching |
-| Watchlist + match-on-detection | Backend logic exists (`watchlist.py`, wired into `detections.py`) for exact-plate matches; no real-time alert delivery to the UI yet; attribute-based matching not built yet (0c) |
-| Cross-camera route reconstruction | `/detections/route/{plate}` works, ordered by `created_at` (fixed this session — see 0a), wired into the Dashboard's plate search; **not yet drawn on the GIS map**; attribute-based route search not built yet (0c) |
+| Unified control room Dashboard | Rebuilt into a real control room (coverage summary, live preview grid, plate **and vehicle-description** search) |
+| ANPR pipeline (YOLO detect + OCR + PTS timestamp + POST /detections) | Hardened (frame throttling, decoder warm-up skip, crop upscaling, absolute HLS URLs); plate legibility itself is a real, separate problem (0b) |
+| Vehicle attribute tracking (type + color, complementing plate ANPR) | **Core build done** — nullable plate on Detection/Watchlist, `anpr/color.py` extraction, thumbnail capture+serving, `/detections/search`, generalized watchlist matching. Verified end-to-end against live cctv.corp8.cloud footage. Stretch items (GIS-plausibility ranking, partial-plate tier) not done — see 0c |
+| Watchlist + match-on-detection | Done — exact-plate and attribute-tiered matching, `GET /watchlist/alerts/recent` short-polled from a new Watchlist page (entry management + live alert feed) |
+| Cross-camera route reconstruction | Done for both plate (`/detections/route/{plate}`) and attributes (`/detections/search`), ordered by `created_at`, drawn on the GIS map in Registry.jsx |
 | Docs (PPT, HLD), demo recordings | Not started |
 
 ### 0a. Bugs fixed this session (read before touching feeds/viewer code again)
@@ -57,12 +57,17 @@ Design, once implemented:
 - Watchlist matching generalizes to check plate-based **and** attribute-based entries; alerts are tiered (exact plate > attributes-only) and deduped over a time window so the feed doesn't flood with "possible red car" noise every time a common-colored car passes a camera.
 - Stretch, only if time remains: rank attribute-based candidate sightings by GIS plausibility (camera lat/lng already in the registry — reject a "match" that would require impossible travel speed between two cameras) and keep partial/low-confidence OCR reads as a middle tier instead of today's all-or-nothing plate regex match.
 
-### 0c. Known gaps — pick these up next, in roughly this order
+### 0c. Day 2 core — done, verified end-to-end against live footage
 
-1. **Vehicle attribute tracking** (0b, `TIMELINE.md` Day 2) — the pivot above. Biggest remaining chunk of work; see `TIMELINE.md` for the core/stretch split.
-2. **Real-time alerts** (`TIMELINE.md` Day 2) — watchlist matching happens server-side on every detection but nothing pushes it to the browser. **Confirmed required, not optional**: the official own-feed demo checklist explicitly calls for "watchlist matching, alert generation" (Section 10). Cheapest path: short-poll a new `GET /watchlist/alerts/recent` endpoint from the Dashboard rather than building a websocket layer. Now also needs to surface attribute-based matches, tiered against exact-plate matches (0b).
-3. **Route-on-map** (`TIMELINE.md` Day 2) — `/detections/route/{plate}` returns the right data; it just isn't drawn as a polyline on the Registry GIS map yet. Cheapest path: reuse the same Leaflet map instance, add a `Polyline` + numbered markers for the stops returned by that endpoint. Should support attribute-based candidate routes too, not just plate routes.
-4. **Supabase provisioning** (see 5a) — code is ready, a live project isn't created yet. Do this before Day 3's integration test at the latest.
+Vehicle attribute tracking, real-time alerts, and route-on-map (the three items from `TIMELINE.md` Day 2's core list) are all built and verified:
+- `anpr/color.py` extracts a dominant color per vehicle; `anpr/pipeline.py` records every detected vehicle (plate when legible, type+color+thumbnail always) via multipart upload — confirmed live against `cam14` (real detections: "orange car", "yellow car", "silver_gray car", correctly stored with thumbnails, no plate).
+- Backend: nullable plate on `Detection`/`WatchlistEntry`, `GET /detections/search` (attribute candidate sightings), `GET /detections/{id}/thumbnail`, generalized `check_detection_against_watchlist` (exact-plate and attribute tiers), `GET /watchlist/alerts/recent`.
+- Frontend: new Watchlist page (entry management, mode toggle plate/attributes, live-polled tiered alert feed), Dashboard search generalized to plate-or-attributes with thumbnails, Registry GIS map now draws the route as a polyline + numbered `CircleMarker` stops with popups (thumbnail included) — verified visually in-browser, no console errors.
+
+**Remaining, in roughly this order:**
+1. **Stretch items from 0b** (only if time allows): GIS-plausibility ranking for attribute-based candidates; partial/low-confidence plate tier.
+2. **Supabase provisioning** (see 5a) — code is ready, a live project isn't created yet. Do this before Day 3's integration test at the latest.
+3. **Seed a realistic representative watchlist dataset** for the actual demo plates/vehicles, replacing the synthetic test entries used to verify the matching logic this session.
 
 ---
 

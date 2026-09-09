@@ -46,23 +46,25 @@ Hardened `anpr/pipeline.py` a day ahead of schedule: frame throttling (grab/retr
 
 **Major finding, not a code bug**: zero legible plates across 150+ real vehicle detections on every camera tested (including the toll plaza and one of the three official test-case cameras). The sandbox streams generic wide-angle surveillance CCTV, not purpose-built ANPR hardware — confirmed by comparing against how Ahmedabad/Gandhinagar's real e-challan system actually works (see `PLAN.md` Section 0b). This led directly to Day 2's expanded scope below — don't be surprised the plan changed here.
 
-## Day 2 (Sep 11) — Vehicle Attribute Tracking + Watchlist Alerts + Route-on-Map
+## Day 2 (Sep 11) — Vehicle Attribute Tracking + Watchlist Alerts + Route-on-Map — core done early (Sep 9)
 
 Expanded scope (see `PLAN.md` Section 0b for the full reasoning): plate ANPR alone isn't enough given the sandbox's camera quality, so cross-camera tracking now also works off vehicle type + color, complementing exact-plate matches rather than replacing them.
 
-**Core (must land for this pivot to be real and demoable):**
-- Schema: nullable `plate_number` on `Detection`/`WatchlistEntry`; add `vehicle_type`, `vehicle_color` to both; add `thumbnail_path` to `Detection`. No Alembic in this project — manually `DROP TABLE detections, watchlist CASCADE;` on the local dev DB so `create_all` recreates them with the new columns (both tables are still empty of real data, so no loss).
-- New `anpr/color.py`: dominant-color extraction from a vehicle crop (mask out glare/shadow pixels first, bucket into a small named palette). Document its night/artificial-lighting limitation plainly — this is exactly why the thumbnail matters.
-- `anpr/pipeline.py`: record **every** detected vehicle now (type + color always, plate when legible, thumbnail always) via multipart upload to the backend — mirrors how plate detections already worked, but no longer silently drops vehicles with no legible plate. Extend the existing dedup-cooldown pattern to key on `(camera_id, vehicle_type, vehicle_color)` when there's no plate.
-- Backend: generalize watchlist matching to check plate-based **and** attribute-based entries (tiered: exact plate > attributes-only); add `GET /detections/search?vehicle_type=&vehicle_color=&since=&until=` for candidate sightings by attributes; thumbnail storage + serving.
-- **Real-time alerts** (required, not optional — the official own-feed demo checklist explicitly calls for "watchlist matching, alert generation"): `GET /watchlist/alerts/recent`, short-polled from the Dashboard, surfacing both plate and attribute matches with a clear tier label — no websocket layer needed at this scale.
-- Minimal frontend: attribute search form (type + color) next to the existing plate search, showing thumbnails + tier badges; a minimal watchlist-entry form (plate OR type+color) — none exists in the UI yet.
-- **Route on the GIS map**: `/detections/route/{plate}` already returns the right data (ordered by `created_at`, fixed this session). Add a `Polyline` + numbered stop markers to the Leaflet map so the official test case — cam01 → cam13 → cam15 — renders visually, not just as a list. Support attribute-based candidate routes too, not just plate routes.
-- Seed the representative watchlist dataset (both plate-based and attribute-based entries) for the demo.
+**Core — done and verified end-to-end** (real live pipeline run against `cam14`, real API calls, in-browser verification with no console errors — see `PLAN.md` Section 0c):
+- ✅ Schema: nullable `plate_number` on `Detection`/`WatchlistEntry`; `vehicle_type`, `vehicle_color` on both; `thumbnail_path` on `Detection`.
+- ✅ `anpr/color.py`: dominant-color extraction from a vehicle crop (masks out glare/shadow first, buckets into a small named palette). Its night/artificial-lighting limitation is documented plainly and was confirmed live (a real detection was labeled "orange" that's actually a silver/gray car under sodium streetlight — exactly why the thumbnail matters, and it made the true color obvious at a glance).
+- ✅ `anpr/pipeline.py`: records **every** detected vehicle now (type + color always, plate when legible, thumbnail always) via multipart upload — no longer silently drops vehicles with no legible plate. Dedup-cooldown extended to key on `(camera_id, vehicle_type, vehicle_color)` when there's no plate.
+- ✅ Backend: generalized watchlist matching (tiered: exact plate > attributes-only), `GET /detections/search` for candidate sightings by attributes, thumbnail storage + serving at `GET /detections/{id}/thumbnail`.
+- ✅ **Real-time alerts**: `GET /watchlist/alerts/recent`, short-polled every 5s from the new Watchlist page, surfacing both plate and attribute matches with a clear tier badge.
+- ✅ Frontend: new Watchlist page (entry management + live alert feed); Dashboard search generalized to plate-or-attributes with thumbnails; Registry GIS map draws the route as a polyline + numbered stop markers with popups (thumbnail included).
+- ✅ Manually recreated the local dev DB tables for the new schema (no Alembic in this project) — same step will be needed once Supabase is provisioned.
+- ⬜ Still open: seed a realistic representative watchlist dataset for the actual demo (only synthetic test entries exist right now).
 
-**Stretch (only if core is solid with time still left):**
+**Stretch (only if there's still time before Day 3):**
 - GIS-plausibility ranking for attribute-based candidate sightings — use camera lat/lng (already in the registry) to flag/reject matches that would require impossible travel speed between two cameras.
 - Partial/low-confidence plate tier — keep near-miss OCR reads instead of today's all-or-nothing regex match, and combine them with type+color for a stronger signal than either alone.
+
+Given core landed a day ahead of schedule, Day 3's integration test can start early if the team is ready — no need to wait for Sep 12 if Supabase provisioning and watchlist seeding are also done sooner.
 
 ## Day 3 (Sep 12) — End-to-End Integration Test
 

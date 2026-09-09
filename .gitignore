@@ -8,6 +8,9 @@ venv/
 # Downloaded model weights (fetched automatically on first run — see anpr/detector.py)
 *.pt
 
+# Runtime-generated detection thumbnails (see backend/app/routers/detections.py)
+backend/data/thumbnails/
+
 # Node
 node_modules/
 dist/

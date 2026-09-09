@@ -48,6 +48,14 @@ class WatchlistCategory(str, enum.Enum):
     blacklisted = "blacklisted"
 
 
+class VehicleType(str, enum.Enum):
+    """Matches the YOLO vehicle detector's labels (anpr/detector.py VEHICLE_CLASS_IDS)."""
+    car = "car"
+    motorcycle = "motorcycle"
+    bus = "bus"
+    truck = "truck"
+
+
 class Camera(Base):
     """Model 1 — registry & GIS. Metadata only, no video streaming here."""
     __tablename__ = "cameras"
@@ -69,27 +77,51 @@ class Camera(Base):
 
 class Detection(Base):
     """
-    Model 2 — ANPR detection event. Single source of truth for both the
-    watchlist-match/alert path and the cross-camera route-reconstruction path.
+    Model 2 — vehicle sighting event (ANPR + attribute tracking). Single
+    source of truth for both the watchlist-match/alert path and the
+    cross-camera route-reconstruction path.
+
+    Every detected vehicle is recorded now, not just ones with a legible
+    plate (PLAN.md Section 0b) — cctv.corp8.cloud's cameras are generic
+    wide-angle surveillance CCTV, not purpose-built ANPR hardware, so a
+    legible plate is the exception rather than the rule. plate_number and
+    vehicle_color may be null; vehicle_type and thumbnail_path are always
+    populated (type comes free from the YOLO detector, thumbnail is the
+    human-checkable fallback since computed color is unreliable under
+    glare/artificial lighting).
     """
     __tablename__ = "detections"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    plate_number = Column(String, nullable=False, index=True)
+    plate_number = Column(String, nullable=True, index=True)
+    vehicle_type = Column(Enum(VehicleType), nullable=True)
+    vehicle_color = Column(String, nullable=True)  # small named palette, see anpr/color.py
+    thumbnail_path = Column(String, nullable=True)  # saved crop — human-checkable fallback for vehicle_color
     timestamp_ms = Column(Float, nullable=False)  # derived from stream PTS — not wall-clock
     camera_id = Column(String, ForeignKey("cameras.camera_id"), nullable=False)
     confidence = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)  # row-insert time only, not for logic
+    created_at = Column(DateTime, default=datetime.utcnow)  # used for cross-camera ordering — see detections.py
 
     camera = relationship("Camera", back_populates="detections")
 
 
 class WatchlistEntry(Base):
-    """Representative watchlist — not a real VAHAN/eGujCop/AFIS/NAFIS integration."""
+    """
+    Representative watchlist — not a real VAHAN/eGujCop/AFIS/NAFIS integration.
+
+    An entry needs plate_number OR (vehicle_type AND vehicle_color), not
+    neither — enforced at the API layer (schemas.py), not here. Attribute-
+    based entries exist for exactly the "suspect vehicle, no known plate"
+    case (PLAN.md Section 0b) — matching on them is a narrowing tool, not
+    unique identification, so treat matches on these as lower-confidence
+    than an exact plate match (see watchlist.py).
+    """
     __tablename__ = "watchlist"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    plate_number = Column(String, unique=True, nullable=False, index=True)
+    plate_number = Column(String, unique=True, nullable=True, index=True)
+    vehicle_type = Column(Enum(VehicleType), nullable=True)
+    vehicle_color = Column(String, nullable=True)
     category = Column(Enum(WatchlistCategory), nullable=False)
     source = Column(String, default="representative-dataset")
     date_added = Column(DateTime, default=datetime.utcnow)
