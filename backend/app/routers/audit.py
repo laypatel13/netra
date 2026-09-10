@@ -1,8 +1,8 @@
 """
-Audit log — read endpoint plus the log_action() helper other routers call.
+Audit log - read endpoint plus the log_action() helper other routers call.
 
 Import log_action from here in cameras.py etc. rather than duplicating the
-write logic — one place to change if the audit schema grows.
+write logic - one place to change if the audit schema grows.
 """
 from typing import List, Optional
 

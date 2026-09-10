@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "netra-frontend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd frontend && BACKEND_PORT=8010 npm run dev"],
+      "port": 5173
+    }
+  ]
+}

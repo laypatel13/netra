@@ -1,5 +1,5 @@
 """
-Day 1 validation script — confirm we can connect to and hold a stream from
+Day 1 validation script - confirm we can connect to and hold a stream from
 cctv.corp8.cloud before building anything else on top of it.
 
 Implements the mandatory protocol rules from PLAN.md Section 8:
@@ -63,7 +63,7 @@ def login_session(email: str, password: str) -> requests.Session:
 
 
 def fetch_catalogue(session: requests.Session) -> list[dict]:
-    """Pull the camera catalogue from cameras.json — never hardcode camera IDs."""
+    """Pull the camera catalogue from cameras.json - never hardcode camera IDs."""
     url = f"https://{CCTV_HOST}/cameras.json"
     log.info("Fetching catalogue from %s", url)
     resp = session.get(url, timeout=15)
@@ -95,7 +95,7 @@ def build_rtsp_url(email: str, password: str, camera: dict) -> str:
 
 
 def build_hls_url(camera: dict) -> str:
-    """HLS on the CDN host (requires session cookie — OpenCV uses its own HTTP stack)."""
+    """HLS on the CDN host (requires session cookie - OpenCV uses its own HTTP stack)."""
     cam_id = str(camera.get("id", camera.get("camera_id", "")))
     return f"https://{CCTV_HOST}/{cam_id}/index.m3u8"
 
@@ -122,7 +122,7 @@ def run_capture_loop(rtsp_url: str, hls_url: str, max_frames: int) -> None:
     using_hls = False
 
     if cap is None:
-        log.warning("RTSP not reachable — falling back to HLS: %s", hls_url)
+        log.warning("RTSP not reachable - falling back to HLS: %s", hls_url)
         cap = try_open(hls_url, timeout_s=15)
         active_url = hls_url
         using_hls = True
@@ -143,7 +143,7 @@ def run_capture_loop(rtsp_url: str, hls_url: str, max_frames: int) -> None:
             log.info("Reconnecting to %s", active_url)
             cap = cv2.VideoCapture(active_url, cv2.CAP_FFMPEG)
             if not cap.isOpened():
-                log.warning("Failed to open stream — retrying in %ss", backoff)
+                log.warning("Failed to open stream - retrying in %ss", backoff)
                 time.sleep(backoff)
                 backoff = min(backoff * 2, MAX_BACKOFF_S)
                 cap = None
@@ -153,7 +153,7 @@ def run_capture_loop(rtsp_url: str, hls_url: str, max_frames: int) -> None:
         while frames_read < max_frames:
             ok, _frame = cap.read()
             if not ok:
-                log.warning("Frame read failed — treating as a drop, not a crash. Reconnecting.")
+                log.warning("Frame read failed - treating as a drop, not a crash. Reconnecting.")
                 break
 
             pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
@@ -162,7 +162,7 @@ def run_capture_loop(rtsp_url: str, hls_url: str, max_frames: int) -> None:
             if last_pts is not None:
                 delta = pts_ms - last_pts
                 if frames_read <= 5:
-                    log.info("frame=%d pts_ms=%.1f delta=%.1f (early frame — buffered replay, ignore for timing)",
+                    log.info("frame=%d pts_ms=%.1f delta=%.1f (early frame - buffered replay, ignore for timing)",
                               frames_read, pts_ms, delta)
                 else:
                     log.info("frame=%d pts_ms=%.1f delta=%.1f", frames_read, pts_ms, delta)
@@ -171,7 +171,7 @@ def run_capture_loop(rtsp_url: str, hls_url: str, max_frames: int) -> None:
         cap.release()
         cap = None
 
-    log.info("Done — read %d frames successfully via %s.", frames_read, "HLS" if using_hls else "RTSP")
+    log.info("Done - read %d frames successfully via %s.", frames_read, "HLS" if using_hls else "RTSP")
 
 
 def main():

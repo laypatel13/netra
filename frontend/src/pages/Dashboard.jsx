@@ -1,268 +1,285 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  ArrowRight,
+  BellRing,
+  Building2,
+  Camera,
+  Percent,
+  ShieldAlert,
+  VideoOff,
+} from "lucide-react";
+import PageHeader from "../components/PageHeader.jsx";
+import { Card, CardBody, CardHeader, SectionHeading } from "../components/ui/Card.jsx";
+import Stat from "../components/ui/Stat.jsx";
+import Button from "../components/ui/Button.jsx";
+import { EmptyState, ErrorState, SkeletonGrid } from "../components/ui/Feedback.jsx";
 import HlsPlayer from "../components/HlsPlayer.jsx";
+import VehicleQueryForm from "../components/VehicleQueryForm.jsx";
+import StopList from "../components/StopList.jsx";
+import AlertRow from "../components/AlertRow.jsx";
+import { api } from "../lib/api.js";
+import { count, pct } from "../lib/format.js";
 
 const PREVIEW_TILE_COUNT = 4;
+const ALERT_POLL_MS = 5000;
 
 /**
- * Unified control room — the convergence point of Model 1 (registry/GIS)
- * and Model 2 (live viewing/analytics), per PLAN.md Section 2's system
- * diagram. Pulls together:
- *   - coverage summary (GET /cameras/gap-analysis)
- *   - a small live preview grid (GET /feeds/catalogue)
- *   - plate or vehicle-description search -> GET /detections/route/{plate}
- *     or /detections/search for the route/candidate-sightings view
- *   - watchlist size (GET /watchlist) — full management + live alerts feed
- *     lives on the Watchlist page
+ * Unified control room - the convergence point of Model 1 (registry/GIS) and
+ * Model 2 (live viewing/analytics), per PLAN.md Section 2's system diagram.
+ * Coverage summary, a live preview grid, plate-or-description vehicle search,
+ * and the head of the alert feed, so an operator can see the state of the
+ * whole network without leaving this page.
  */
-const VEHICLE_TYPES = ["car", "motorcycle", "bus", "truck"];
-
 export default function Dashboard() {
-  const [searchMode, setSearchMode] = useState("plate"); // "plate" | "attributes"
-  const [plate, setPlate] = useState("");
-  const [vehicleType, setVehicleType] = useState(VEHICLE_TYPES[0]);
-  const [vehicleColor, setVehicleColor] = useState("");
-  const [route, setRoute] = useState(null);
-  const [routeError, setRouteError] = useState(null);
-
   const [gap, setGap] = useState(null);
   const [gapError, setGapError] = useState(null);
-  const [previewCameras, setPreviewCameras] = useState([]);
+
+  const [previewCameras, setPreviewCameras] = useState(null);
   const [reconnectConfig, setReconnectConfig] = useState(null);
+
   const [watchlistCount, setWatchlistCount] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+
+  const [route, setRoute] = useState(null);
+  const [routeError, setRouteError] = useState(null);
+  const [searching, setSearching] = useState(false);
+
+  const loadCoverage = useCallback(() => {
+    setGapError(null);
+    api("/cameras/gap-analysis")
+      .then(setGap)
+      .catch(setGapError);
+  }, []);
 
   useEffect(() => {
-    fetch("/api/cameras/gap-analysis")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then(setGap)
-      .catch((e) => setGapError(e.message));
+    loadCoverage();
 
-    fetch("/api/feeds/catalogue")
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+    api("/feeds/catalogue")
       .then((data) => {
         setPreviewCameras((data.cameras || []).slice(0, PREVIEW_TILE_COUNT));
         setReconnectConfig(data.reconnect || null);
       })
       .catch(() => setPreviewCameras([]));
 
-    fetch("/api/watchlist")
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((list) => setWatchlistCount(list.length))
+    api("/watchlist")
+      .then((list) => setWatchlistCount(Array.isArray(list) ? list.length : null))
       .catch(() => setWatchlistCount(null));
+  }, [loadCoverage]);
+
+  // Short-poll the alert head - no websocket layer needed at this scale.
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api("/watchlist/alerts/recent")
+        .then((d) => alive && setAlerts(Array.isArray(d) ? d : []))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, ALERT_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
   }, []);
 
-  async function searchRoute(e) {
-    e.preventDefault();
+  async function handleSearch({ mode, plate, vehicleType, vehicleColor }) {
     setRouteError(null);
     setRoute(null);
+    setSearching(true);
     try {
-      const url =
-        searchMode === "plate"
-          ? `/api/detections/route/${encodeURIComponent(plate)}`
-          : `/api/detections/search?vehicle_type=${encodeURIComponent(vehicleType)}&vehicle_color=${encodeURIComponent(vehicleColor)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        setRouteError(
-          searchMode === "plate"
-            ? `No route found for "${plate}"`
-            : `No sightings found for ${vehicleColor} ${vehicleType}`
-        );
-        return;
-      }
-      setRoute(await res.json());
-    } catch {
-      setRouteError("Could not reach the backend — is it running?");
+      const path =
+        mode === "plate"
+          ? `/detections/route/${encodeURIComponent(plate)}`
+          : `/detections/search?vehicle_type=${encodeURIComponent(vehicleType)}&vehicle_color=${encodeURIComponent(vehicleColor)}`;
+      setRoute(await api(path));
+    } catch (err) {
+      setRouteError(
+        err.offline
+          ? err
+          : {
+              message:
+                mode === "plate"
+                  ? `No sightings recorded for “${plate || "-"}”. The plate may not have been read on any onboarded camera.`
+                  : `No sightings recorded for a ${vehicleColor || "-"} ${vehicleType}. Try a broader colour, or a different type.`,
+            }
+      );
+    } finally {
+      setSearching(false);
     }
   }
 
-  return (
-    <div>
-      <h2>Control room</h2>
+  const s = gap?.summary;
 
-      {/* Coverage summary strip */}
-      {gapError ? (
-        <p style={{ color: "crimson", fontSize: 13 }}>Could not load coverage summary: {gapError}</p>
-      ) : gap ? (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-            gap: 12,
-            marginBottom: 24,
-          }}
-        >
-          <StatCard label="Cameras onboarded" value={gap.summary.total_cameras} />
-          <StatCard
-            label="Coverage"
-            value={`${gap.summary.coverage_pct}%`}
-            color={gap.summary.coverage_pct >= 75 ? "#22c55e" : gap.summary.coverage_pct >= 40 ? "#f59e0b" : "#ef4444"}
-          />
-          <StatCard
-            label="Depts missing"
-            value={gap.summary.departments_missing}
-            color={gap.summary.departments_missing > 0 ? "#ef4444" : "#22c55e"}
-          />
-          <StatCard label="Watchlist entries" value={watchlistCount ?? "—"} />
-          <Link to="/gap-analysis" style={{ alignSelf: "center", fontSize: 13, color: "#60a5fa" }}>
-            Full gap-analysis report →
+  return (
+    <>
+      <PageHeader
+        title="Control room"
+        description="One view of the whole network - coverage, live feeds, vehicle tracing and watchlist activity."
+        actions={
+          <Link to="/app/gap-analysis">
+            <Button variant="secondary" size="sm">
+              Full coverage report
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Button>
           </Link>
-        </div>
+        }
+      />
+
+      {/* ------------------------------------------------------- Coverage stats */}
+      {gapError ? (
+        <ErrorState error={gapError} onRetry={loadCoverage} className="mb-6" />
       ) : (
-        <p style={{ color: "#999", fontSize: 13 }}>Loading coverage summary…</p>
-      )}
-
-      {/* Live preview grid */}
-      <h3 style={{ marginBottom: 8 }}>Live preview</h3>
-      {previewCameras.length === 0 ? (
-        <p style={{ color: "#888", fontSize: 13 }}>
-          No feeds available — check the backend / <code>CCTV_EMAIL</code> &amp;{" "}
-          <code>CCTV_PASSWORD</code> config, or open the{" "}
-          <Link to="/live">full Live Viewer</Link>.
-        </p>
-      ) : (
-        <>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-              gap: 10,
-              marginBottom: 8,
-            }}
-          >
-            {previewCameras.map((cam, i) => (
-              <HlsPlayer
-                key={cam.camera_id}
-                src={cam.streams?.hls?.startsWith("/") ? `/api${cam.streams.hls}` : cam.streams?.hls}
-                mp4Src={cam.streams?.mp4}
-                cameraId={cam.name || cam.camera_id}
-                reconnect={reconnectConfig}
-                startDelayMs={i * 250}
-              />
-            ))}
-          </div>
-          <p style={{ marginTop: 0, marginBottom: 24 }}>
-            <Link to="/live" style={{ fontSize: 13, color: "#60a5fa" }}>
-              Open full Live Viewer ({gap?.summary.total_cameras ?? "all"} cameras) →
-            </Link>
-          </p>
-        </>
-      )}
-
-      {/* Plate / attribute search / route trace */}
-      <h3 style={{ marginBottom: 8 }}>Trace a vehicle</h3>
-      <form onSubmit={searchRoute} style={{ marginBottom: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select value={searchMode} onChange={(e) => setSearchMode(e.target.value)} style={{ padding: 8 }}>
-          <option value="plate">By plate number</option>
-          <option value="attributes">By vehicle description (no plate known)</option>
-        </select>
-
-        {searchMode === "plate" ? (
-          <input
-            value={plate}
-            onChange={(e) => setPlate(e.target.value)}
-            placeholder="Search by plate number"
-            style={{ padding: 8 }}
+        <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <Stat
+            label="Cameras onboarded"
+            value={count(s?.total_cameras)}
+            icon={Camera}
+            loading={!gap}
           />
-        ) : (
-          <>
-            <select value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} style={{ padding: 8 }}>
-              {VEHICLE_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-            <input
-              value={vehicleColor}
-              onChange={(e) => setVehicleColor(e.target.value)}
-              placeholder="Color (e.g. red)"
-              style={{ padding: 8 }}
-            />
-          </>
-        )}
-
-        <button type="submit" style={{ padding: 8 }}>
-          Trace route
-        </button>
-      </form>
-      {searchMode === "attributes" && (
-        <p style={{ color: "#888", fontSize: 12, marginTop: 0, marginBottom: 16 }}>
-          A narrowing tool, not identification — other vehicles may share the same type/color.
-          Cross-check against the thumbnails below.
-        </p>
-      )}
-
-      {routeError && <p style={{ color: "crimson" }}>{routeError}</p>}
-
-      {route && (
-        <div style={{ marginBottom: 16 }}>
-          <h4>{route.plate_number ? `Route for ${route.plate_number}` : `Candidate sightings: ${route.query}`}</h4>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {route.stops.map((stop, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "flex",
-                  gap: 12,
-                  alignItems: "center",
-                  background: "#1e1e2e",
-                  border: "1px solid #333",
-                  borderRadius: 8,
-                  padding: 10,
-                }}
-              >
-                <div style={{ width: 24, textAlign: "center", color: "#666", fontSize: 13 }}>{i + 1}</div>
-                {stop.thumbnail_url && (
-                  <img
-                    src={`/api${stop.thumbnail_url}`}
-                    alt=""
-                    style={{ width: 70, height: 52, objectFit: "cover", borderRadius: 4 }}
-                  />
-                )}
-                <div style={{ fontSize: 13 }}>
-                  Camera <strong>{stop.camera_id}</strong> — pts {stop.timestamp_ms.toFixed(0)}ms — confidence{" "}
-                  {(stop.confidence * 100).toFixed(0)}%
-                  {stop.vehicle_type && (
-                    <>
-                      {" — "}
-                      {stop.vehicle_color} {stop.vehicle_type}
-                    </>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-          <p style={{ marginTop: 8 }}>
-            <Link to="/registry" style={{ fontSize: 13, color: "#60a5fa" }}>
-              View this route on the GIS map →
-            </Link>
-          </p>
+          <Stat
+            label="Coverage"
+            value={pct(s?.coverage_pct)}
+            icon={Percent}
+            loading={!gap}
+            tone={!s ? "neutral" : s.coverage_pct >= 75 ? "ok" : s.coverage_pct >= 40 ? "warn" : "danger"}
+          />
+          <Stat
+            label="Departments missing"
+            value={count(s?.departments_missing)}
+            icon={Building2}
+            loading={!gap}
+            tone={!s ? "neutral" : s.departments_missing > 0 ? "danger" : "ok"}
+            hint={s ? `${count(s.departments_onboarded)} onboarded` : undefined}
+          />
+          <Stat label="Watchlist entries" value={count(watchlistCount)} icon={ShieldAlert} />
+          <Stat
+            label="Active alerts"
+            value={count(alerts.length)}
+            icon={BellRing}
+            tone={alerts.length > 0 ? "danger" : "neutral"}
+            hint="among recent detections"
+          />
         </div>
       )}
 
-      <p style={{ color: "#666", marginTop: 16, fontSize: 13 }}>
-        <Link to="/watchlist" style={{ color: "#60a5fa" }}>Manage the watchlist and see the live alerts feed →</Link>
-      </p>
-    </div>
-  );
-}
+      {/* ------------------------------------------- Trace a vehicle + alert head */}
+      <div className="mb-8 grid gap-4 xl:grid-cols-3">
+        <Card className="xl:col-span-2">
+          <CardHeader
+            title="Trace a vehicle"
+            description="Search the detection store by plate, or by what the vehicle looked like when no plate was legible."
+          />
+          <CardBody>
+            <VehicleQueryForm onSearch={handleSearch} loading={searching}>
+              {route && (
+                <Button type="button" variant="ghost" onClick={() => setRoute(null)}>
+                  Clear
+                </Button>
+              )}
+            </VehicleQueryForm>
 
-function StatCard({ label, value, color = "#e2e8f0" }) {
-  return (
-    <div
-      style={{
-        background: "#1e1e2e",
-        border: "1px solid #333",
-        borderRadius: 8,
-        padding: 14,
-        textAlign: "center",
-      }}
-    >
-      <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
-      <div style={{ fontSize: 11, color: "#999", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-        {label}
+            {routeError && <ErrorState error={routeError} className="mt-4" />}
+
+            {route && (
+              <div className="mt-5">
+                <SectionHeading
+                  title={
+                    route.plate_number
+                      ? `Route for ${route.plate_number}`
+                      : `Candidate sightings - ${route.query}`
+                  }
+                  description={`${route.stops?.length ?? 0} sighting${route.stops?.length === 1 ? "" : "s"}, ordered as recorded.`}
+                  actions={
+                    <Link to="/app/registry">
+                      <Button size="sm" variant="secondary">
+                        View on map
+                        <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </Link>
+                  }
+                  className="mb-3"
+                />
+                {route.stops?.length ? (
+                  <StopList stops={route.stops} />
+                ) : (
+                  <EmptyState title="No sightings in this result" description="The query returned an empty route." />
+                )}
+              </div>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Live alerts"
+            description="Polled every 5 seconds."
+            actions={
+              <Link to="/app/watchlist" className="rounded text-[13px] font-medium text-azure hover:underline">
+                Manage
+              </Link>
+            }
+          />
+          <CardBody>
+            {alerts.length === 0 ? (
+              <EmptyState
+                icon={ShieldAlert}
+                title="No matches right now"
+                description="Watchlist matches among recent detections will appear here the moment they're recorded."
+              />
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {alerts.slice(0, 5).map((a, i) => (
+                  <AlertRow key={`${a.detection?.id ?? i}`} alert={a} />
+                ))}
+              </ul>
+            )}
+          </CardBody>
+        </Card>
       </div>
-    </div>
+
+      {/* ---------------------------------------------------------- Live preview */}
+      <SectionHeading
+        title="Live preview"
+        description={`First ${PREVIEW_TILE_COUNT} cameras from the feed catalogue.`}
+        actions={
+          <Link to="/app/live">
+            <Button size="sm" variant="secondary">
+              Open full live viewer
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </Link>
+        }
+      />
+
+      {previewCameras === null ? (
+        <SkeletonGrid items={PREVIEW_TILE_COUNT} className="sm:grid-cols-2 xl:grid-cols-4" />
+      ) : previewCameras.length === 0 ? (
+        <EmptyState
+          icon={VideoOff}
+          title="No feeds available"
+          description="The feed catalogue came back empty. Check that the backend is running and that CCTV_EMAIL and CCTV_PASSWORD are set in backend/.env."
+          action={
+            <Link to="/app/live">
+              <Button size="sm" variant="secondary">
+                Open live viewer
+              </Button>
+            </Link>
+          }
+        />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {previewCameras.map((cam, i) => (
+            <HlsPlayer
+              key={cam.camera_id}
+              src={cam.streams?.hls?.startsWith("/") ? `/api${cam.streams.hls}` : cam.streams?.hls}
+              mp4Src={cam.streams?.mp4}
+              cameraId={cam.name || cam.camera_id}
+              reconnect={reconnectConfig}
+              startDelayMs={i * 250}
+            />
+          ))}
+        </div>
+      )}
+    </>
   );
 }

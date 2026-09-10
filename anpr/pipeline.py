@@ -2,21 +2,21 @@
 ANPR pipeline (TIMELINE.md Day 1).
 
 Connects to camera feeds resolved by the backend's own /feeds/catalogue
-rather than re-fetching cameras.json directly — this stays consistent with
+rather than re-fetching cameras.json directly - this stays consistent with
 what HlsPlayer.jsx already uses, and gets the authenticated RTSP/HLS URLs
 and the reconnect-with-backoff config for free instead of duplicating that
 logic a third time.
 
 Stream URLs now include authentication (email:password@ in RTSP/WebRTC URLs
 on the direct IP 103.250.160.189). The backend's /feeds/catalogue proxy
-handles login and URL construction — this pipeline just consumes the
+handles login and URL construction - this pipeline just consumes the
 resolved URLs it returns.
 
-Camera IDs are cam01–cam30 (not numeric). The pipeline reads them from the
+Camera IDs are cam01-cam30 (not numeric). The pipeline reads them from the
 catalogue, never hardcoded.
 
 Detects vehicles, reads plates, and POSTs each valid detection to
-/detections with a PTS-derived timestamp — never wall-clock time. See
+/detections with a PTS-derived timestamp - never wall-clock time. See
 PLAN.md Section 8.
 
 Usage:
@@ -24,10 +24,10 @@ Usage:
     python pipeline.py --backend http://localhost:8000 --camera-ids all --max-cameras 5
     python pipeline.py --dry-run --camera-ids cam01 --max-frames 200
     python pipeline.py --camera-ids cam01 --process-every-n 3 --dedup-cooldown-s 10 --conf-threshold 0.3
-        (tuning flags — adjust these against real behavior rather than editing constants)
+        (tuning flags - adjust these against real behavior rather than editing constants)
 
 Design notes:
-  - One thread per camera, but this is genuinely CPU-bound, not I/O-bound —
+  - One thread per camera, but this is genuinely CPU-bound, not I/O-bound -
     YOLO detection + EasyOCR on CPU is slow enough (measured: on the order
     of hundreds of ms per processed frame) that it cannot keep up with a
     live 15-30fps stream. PROCESS_EVERY_N_FRAMES throttles via grab()+
@@ -35,19 +35,19 @@ Design notes:
     instead of running detection on every single frame and falling further
     and further behind real time. Many concurrent camera threads will
     contend for CPU (Python's GIL is released during the heavy torch/OpenCV
-    compute, so there's some real parallelism, but not linear scaling) —
+    compute, so there's some real parallelism, but not linear scaling) -
     keep --max-cameras modest for a live demo rather than trying to run
     all 30 at once.
-  - No fixed-shape batching across cameras — each camera's frames are
+  - No fixed-shape batching across cameras - each camera's frames are
     processed independently at their own native resolution/codec/frame rate.
-  - De-duplication: the same plate — or, with no legible plate, the same
-    (vehicle_type, vehicle_color) combination — seen on consecutive frames
+  - De-duplication: the same plate - or, with no legible plate, the same
+    (vehicle_type, vehicle_color) combination - seen on consecutive frames
     of the same camera isn't re-reported every frame, only on first sighting
     or after a cooldown window. Cooldown uses wall-clock time deliberately
     (it's bookkeeping for how often *we* re-report), while every detection's
     stored timestamp_ms stays PTS-derived.
   - Every detected vehicle is recorded now, not just ones with a legible
-    plate (PLAN.md Section 0b) — vehicle_type + a thumbnail are always
+    plate (PLAN.md Section 0b) - vehicle_type + a thumbnail are always
     captured; plate_number and vehicle_color are populated when available.
 """
 import argparse
@@ -73,7 +73,7 @@ log = logging.getLogger("netra.anpr")
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 # Defaults for --dedup-cooldown-s / --process-every-n / --conf-threshold
-# below — CLI-configurable rather than hardcoded so they can be tuned
+# below - CLI-configurable rather than hardcoded so they can be tuned
 # against real behavior during the Day 3 rehearsal without a code edit.
 DEFAULT_DEDUP_COOLDOWN_S = 15.0
 DEFAULT_PROCESS_EVERY_N_FRAMES = 5
@@ -87,7 +87,7 @@ def fetch_camera_catalogue(backend_url: str, host: Optional[str] = None) -> dict
     return resp.json()
 
 
-WARMUP_FRAMES = 15  # frames to discard after connect — decoder warnings/garbage
+WARMUP_FRAMES = 15  # frames to discard after connect - decoder warnings/garbage
                      # before the first IDR frame are normal (PLAN.md Section 8),
                      # confirmed empirically: the very first frame read after
                      # connect is sometimes solid-gray decode garbage.
@@ -96,10 +96,10 @@ WARMUP_FRAMES = 15  # frames to discard after connect — decoder warnings/garba
 def open_capture(camera: dict, backend_url: str) -> Optional[cv2.VideoCapture]:
     """
     Try RTSP first (best for PTS accuracy). `mp4` is None for the primary
-    cctv.corp8.cloud host (no such endpoint exists — see PLAN.md Section 8),
+    cctv.corp8.cloud host (no such endpoint exists - see PLAN.md Section 8),
     so this only reaches it for other/legacy hosts that do provide one.
     `hls` is a backend-relative proxy path (e.g. /feeds/cam01/hls-proxy/...),
-    same as the frontend consumes — must be made absolute against
+    same as the frontend consumes - must be made absolute against
     backend_url before cv2/ffmpeg can open it.
 
     Discards a handful of frames right after connecting: OpenCV reports
@@ -135,7 +135,7 @@ def post_detection(
 ) -> None:
     """
     Every detected vehicle gets POSTed now, not just ones with a legible
-    plate (PLAN.md Section 0b) — plate/vehicle_color may be None.
+    plate (PLAN.md Section 0b) - plate/vehicle_color may be None.
     Multipart upload (fields + JPEG thumbnail) instead of pure JSON, same
     pattern already used by the backend's /cameras/bulk-csv endpoint.
     """
@@ -163,7 +163,7 @@ def post_detection(
         )
         if resp.status_code == 404:
             log.warning(
-                "Camera %s not onboarded in the registry — onboard it before running ANPR against it",
+                "Camera %s not onboarded in the registry - onboard it before running ANPR against it",
                 camera_id,
             )
         else:
@@ -181,7 +181,7 @@ def process_camera(
     camera_id = camera["camera_id"]
     backoff = backoff_cfg["initial_ms"] / 1000.0
     # Two separate cooldown maps: plate-keyed (precise) and attribute-keyed
-    # (camera_id is implicit — this dict is already per-camera) for vehicles
+    # (camera_id is implicit - this dict is already per-camera) for vehicles
     # with no legible plate. Both are wall-clock bookkeeping for how often
     # *we* re-report, never used as the stored timestamp (PLAN.md Section 8).
     last_seen_plate: dict[str, float] = {}
@@ -191,7 +191,7 @@ def process_camera(
     while max_frames is None or frames_processed < max_frames:
         cap = open_capture(camera, backend_url)
         if cap is None:
-            log.warning("Camera %s unreachable on any stream type — retrying in %.0fs", camera_id, backoff)
+            log.warning("Camera %s unreachable on any stream type - retrying in %.0fs", camera_id, backoff)
             time.sleep(backoff)
             backoff = min(backoff * backoff_cfg["multiplier"], backoff_cfg["max_ms"] / 1000.0)
             continue
@@ -201,10 +201,10 @@ def process_camera(
         while max_frames is None or frames_processed < max_frames:
             ok = cap.grab()
             if not ok:
-                log.warning("Camera %s frame read failed — reconnecting", camera_id)
+                log.warning("Camera %s frame read failed - reconnecting", camera_id)
                 break
 
-            # YOLO+OCR on CPU can't keep up with 15-30fps live video — fully
+            # YOLO+OCR on CPU can't keep up with 15-30fps live video - fully
             # decoding and processing every frame would make the pipeline
             # fall further and further behind real time. grab() is cheap
             # (skips the full decode most backends would otherwise do), so
@@ -217,7 +217,7 @@ def process_camera(
             if not ok:
                 continue
 
-            pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)  # PTS, not wall-clock — PLAN.md Section 8
+            pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)  # PTS, not wall-clock - PLAN.md Section 8
             frames_processed += 1
 
             for vbox in detector.detect(frame):
@@ -226,7 +226,7 @@ def process_camera(
                     continue
 
                 # Every detected vehicle is recorded now, not just ones with
-                # a legible plate (PLAN.md Section 0b) — most cctv.corp8.cloud
+                # a legible plate (PLAN.md Section 0b) - most cctv.corp8.cloud
                 # footage doesn't yield one. Plate stays the precise signal
                 # when available; type+color is the fallback that keeps the
                 # vehicle traceable either way.
@@ -272,16 +272,16 @@ def process_camera(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="netra Day 4 — ANPR pipeline")
+    parser = argparse.ArgumentParser(description="netra Day 4 - ANPR pipeline")
     parser.add_argument("--backend", default="http://localhost:8000")
-    parser.add_argument("--host", default=None, help="Camera source host — defaults to the backend's configured host(s)")
+    parser.add_argument("--host", default=None, help="Camera source host - defaults to the backend's configured host(s)")
     parser.add_argument("--camera-ids", default="all", help="Comma-separated camera ids, or 'all'")
     parser.add_argument("--max-cameras", type=int, default=5, help="Cap concurrent camera threads")
     parser.add_argument("--dry-run", action="store_true", help="Log detections instead of POSTing them")
     parser.add_argument("--max-frames", type=int, default=None, help="Stop each camera after N frames (for testing)")
     parser.add_argument(
         "--process-every-n", type=int, default=DEFAULT_PROCESS_EVERY_N_FRAMES,
-        help="Fully decode+process 1 of every N grabbed frames (default: %(default)s) — tune down for a slower/less busy camera, up if the pipeline can't keep pace",
+        help="Fully decode+process 1 of every N grabbed frames (default: %(default)s) - tune down for a slower/less busy camera, up if the pipeline can't keep pace",
     )
     parser.add_argument(
         "--dedup-cooldown-s", type=float, default=DEFAULT_DEDUP_COOLDOWN_S,

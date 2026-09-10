@@ -1,5 +1,5 @@
 """
-netra — FastAPI entrypoint.
+netra - FastAPI entrypoint.
 
 Model 1 (registry/GIS) + Model 2 (live viewing/ANPR/watchlist/tracking).
 See PLAN.md at the repo root for full context before extending this.
@@ -12,25 +12,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app.routers import cameras, detections, watchlist, audit, feeds
 
-# Dev convenience only — swap for Alembic migrations before anything resembling production.
+# Dev convenience only - swap for Alembic migrations before anything resembling production.
 Base.metadata.create_all(bind=engine)
 
 OPENAPI_TAGS = [
     {
         "name": "registry",
-        "description": "**Model 1** — Centralised CCTV Registry & GIS Foundation. Camera onboarding (manual, bulk JSON, bulk CSV), GIS map data, gap-analysis reports, and health-status sync.",
+        "description": "**Model 1** - Centralised CCTV Registry & GIS Foundation. Camera onboarding (manual, bulk JSON, bulk CSV), GIS map data, gap-analysis reports, and health-status sync.",
     },
     {
         "name": "feeds",
-        "description": "**Model 2** — Live feed catalogue proxy. Resolves RTSP/WHEP/HLS stream URLs from upstream Sentinel sandbox and corp8.cloud sources. Frontend players connect here.",
+        "description": "**Model 2** - Live feed catalogue proxy. Resolves RTSP/WHEP/HLS stream URLs from upstream Sentinel sandbox and corp8.cloud sources. Frontend players connect here.",
     },
     {
         "name": "detections",
-        "description": "**Model 2** — ANPR detection ingestion and cross-camera route reconstruction. The ANPR pipeline POSTs every plate read here; the route endpoint stitches sightings into a chronological path.",
+        "description": "**Model 2** - ANPR detection ingestion and cross-camera route reconstruction. The ANPR pipeline POSTs every plate read here; the route endpoint stitches sightings into a chronological path.",
     },
     {
         "name": "watchlist",
-        "description": "Representative watchlist (stolen/suspect/blacklisted vehicles). Uses own dataset — real VAHAN/eGujCop integration is documented in the HLD only, not built.",
+        "description": "Representative watchlist (stolen/suspect/blacklisted vehicles). Uses own dataset - real VAHAN/eGujCop integration is documented in the HLD only, not built.",
     },
     {
         "name": "audit",
@@ -42,7 +42,7 @@ app = FastAPI(
     title="netra",
     description=(
         "**Unified CCTV Registry & Live Viewing/ANPR Platform** for Sentinel Gujarat.\n\n"
-        "Turns 26 fragmented, department-owned CCTV systems into one searchable network — "
+        "Turns 26 fragmented, department-owned CCTV systems into one searchable network - "
         "pull up a plate, see every camera it passed and when, and get auto-alerted if it "
         "matches a stolen/wanted/blacklisted watchlist.\n\n"
         "- **Model 1**: Centralised CCTV Registry & GIS Foundation (mandatory)\n"
@@ -55,7 +55,7 @@ app = FastAPI(
     openapi_tags=OPENAPI_TAGS,
 )
 
-# Was allow_origins=["*"] — tightened per the PLAN.md RBAC TODO. Configurable
+# Was allow_origins=["*"] - tightened per the PLAN.md RBAC TODO. Configurable
 # via env var since the dev origin (Vite on :5173) and the eventual hosted
 # frontend origin (once Supabase-deployed) differ; comma-separated for more
 # than one. Defaults to the local dev origin so nothing breaks out of the box.

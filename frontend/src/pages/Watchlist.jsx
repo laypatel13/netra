@@ -1,224 +1,269 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Plus, ShieldAlert, ShieldCheck } from "lucide-react";
+import PageHeader from "../components/PageHeader.jsx";
+import { Card, CardBody, CardHeader } from "../components/ui/Card.jsx";
+import Button from "../components/ui/Button.jsx";
+import Badge from "../components/ui/Badge.jsx";
+import Field, { Input, Select } from "../components/ui/Field.jsx";
+import Segmented from "../components/ui/Segmented.jsx";
+import { EmptyState, ErrorState } from "../components/ui/Feedback.jsx";
+import AlertRow from "../components/AlertRow.jsx";
+import { VEHICLE_TYPES } from "../components/VehicleQueryForm.jsx";
+import { api } from "../lib/api.js";
+import { count, vehicleLabel } from "../lib/format.js";
 
-const VEHICLE_TYPES = ["car", "motorcycle", "bus", "truck"];
 const CATEGORIES = ["stolen", "suspect", "blacklisted"];
+const ALERT_POLL_MS = 5000;
+
+const MODES = [
+  { value: "plate", label: "By plate" },
+  { value: "attributes", label: "By description" },
+];
 
 /**
- * Watchlist management + real-time-ish alert feed (PLAN.md Section 0c).
+ * Watchlist management + the live alert feed (PLAN.md Section 0c).
  *
- * An entry needs plate_number OR (vehicle_type AND vehicle_color) — the
- * attribute mode exists for exactly the "suspect vehicle, no known plate"
- * case (PLAN.md Section 0b). Alerts are tiered: an exact-plate match is
- * precise, an attributes match is a narrowing tool, not identification —
- * shown with distinct badges so nobody reads them as equally certain.
+ * An entry needs a plate OR a type+colour pair - the description mode exists
+ * for the "suspect vehicle, no known plate" case that wide-angle CCTV forces
+ * on us (Section 0b). Alerts are tiered and never styled alike: an exact plate
+ * read is evidence, a description match is a lead.
  */
 export default function Watchlist() {
-  const [mode, setMode] = useState("plate"); // "plate" | "attributes"
+  const [mode, setMode] = useState("plate");
   const [plateNumber, setPlateNumber] = useState("");
   const [vehicleType, setVehicleType] = useState(VEHICLE_TYPES[0]);
   const [vehicleColor, setVehicleColor] = useState("");
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const [justAdded, setJustAdded] = useState(null);
 
   const [entries, setEntries] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [alertsError, setAlertsError] = useState(null);
 
-  function loadEntries() {
-    fetch("/api/watchlist")
-      .then((res) => res.json())
-      .then(setEntries)
+  const loadEntries = useCallback(() => {
+    api("/watchlist")
+      .then((d) => setEntries(Array.isArray(d) ? d : []))
       .catch(() => setEntries([]));
-  }
+  }, []);
 
-  function loadAlerts() {
-    fetch("/api/watchlist/alerts/recent")
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((data) => {
-        setAlerts(data);
-        setAlertsError(null);
-      })
-      .catch((e) => setAlertsError(e.message));
-  }
+  const loadAlerts = useCallback(
+    () =>
+      api("/watchlist/alerts/recent")
+        .then((d) => {
+          setAlerts(Array.isArray(d) ? d : []);
+          setAlertsError(null);
+        })
+        .catch(setAlertsError),
+    []
+  );
 
   useEffect(() => {
     loadEntries();
     loadAlerts();
-    // Short-poll for a real-time-ish feed — no websocket layer needed at
-    // this scale (PLAN.md Section 0c).
-    const interval = setInterval(loadAlerts, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    const t = setInterval(loadAlerts, ALERT_POLL_MS);
+    return () => clearInterval(t);
+  }, [loadEntries, loadAlerts]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setSubmitting(true);
     setSubmitError(null);
+    setJustAdded(null);
 
     const body =
       mode === "plate"
-        ? { plate_number: plateNumber, category }
-        : { vehicle_type: vehicleType, vehicle_color: vehicleColor, category };
+        ? { plate_number: plateNumber.trim(), category }
+        : { vehicle_type: vehicleType, vehicle_color: vehicleColor.trim(), category };
 
     try {
-      const res = await fetch("/api/watchlist", {
+      await api("/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        const detail = await res.json().catch(() => null);
-        setSubmitError(detail?.detail?.[0]?.msg || detail?.detail || `HTTP ${res.status}`);
-        return;
-      }
+      setJustAdded(
+        mode === "plate" ? plateNumber.trim() : vehicleLabel(vehicleColor.trim(), vehicleType)
+      );
       setPlateNumber("");
       setVehicleColor("");
       loadEntries();
-    } catch {
-      setSubmitError("Could not reach the backend — is it running?");
+    } catch (err) {
+      setSubmitError(err);
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div>
-      <h2>Watchlist</h2>
+    <>
+      <PageHeader
+        title="Watchlist"
+        description="Vehicles to be told about. A match fires the moment a camera in the network sees one - no manual query needed."
+        actions={<Badge tone="brand">Model 2</Badge>}
+      />
 
-      {/* Add entry */}
-      <form
-        onSubmit={handleSubmit}
-        style={{
-          marginBottom: 24,
-          padding: 12,
-          border: "1px solid #333",
-          borderRadius: 8,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <select value={mode} onChange={(e) => setMode(e.target.value)} style={{ padding: 6 }}>
-          <option value="plate">By plate number</option>
-          <option value="attributes">By vehicle description (no plate known)</option>
-        </select>
-
-        {mode === "plate" ? (
-          <input
-            placeholder="Plate number"
-            value={plateNumber}
-            onChange={(e) => setPlateNumber(e.target.value)}
-            required
-            style={{ padding: 6 }}
-          />
-        ) : (
-          <>
-            <select value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} style={{ padding: 6 }}>
-              {VEHICLE_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-            <input
-              placeholder="Color (e.g. red)"
-              value={vehicleColor}
-              onChange={(e) => setVehicleColor(e.target.value)}
-              required
-              style={{ padding: 6 }}
+      <div className="grid gap-4 xl:grid-cols-[400px_1fr]">
+        {/* ------------------------------------------------------ Add + entries */}
+        <div className="flex flex-col gap-4">
+          <Card>
+            <CardHeader
+              title="Add an entry"
+              description="A plate, or a description when the plate isn't known."
             />
-          </>
-        )}
+            <CardBody>
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                <Segmented
+                  value={mode}
+                  onChange={setMode}
+                  options={MODES}
+                  label="Entry type"
+                  className="self-start"
+                />
 
-        <select value={category} onChange={(e) => setCategory(e.target.value)} style={{ padding: 6 }}>
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
+                {mode === "plate" ? (
+                  <Field label="Plate number" required>
+                    {(a) => (
+                      <Input
+                        {...a}
+                        value={plateNumber}
+                        onChange={(e) => setPlateNumber(e.target.value.toUpperCase())}
+                        placeholder="GJ01AB1234"
+                        autoComplete="off"
+                        spellCheck="false"
+                        className="font-mono tracking-wide"
+                      />
+                    )}
+                  </Field>
+                ) : (
+                  <div className="flex gap-3">
+                    <Field label="Vehicle type" required className="flex-1">
+                      {(a) => (
+                        <Select {...a} value={vehicleType} onChange={(e) => setVehicleType(e.target.value)}>
+                          {VEHICLE_TYPES.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                    </Field>
+                    <Field label="Colour" required className="flex-1">
+                      {(a) => (
+                        <Input
+                          {...a}
+                          value={vehicleColor}
+                          onChange={(e) => setVehicleColor(e.target.value)}
+                          placeholder="red"
+                          autoComplete="off"
+                        />
+                      )}
+                    </Field>
+                  </div>
+                )}
 
-        <button type="submit" disabled={submitting} style={{ padding: "6px 12px" }}>
-          {submitting ? "Adding…" : "Add to watchlist"}
-        </button>
-        {submitError && <span style={{ color: "crimson", fontSize: 13 }}>{submitError}</span>}
-      </form>
+                <Field label="Category" required>
+                  {(a) => (
+                    <Select {...a} value={category} onChange={(e) => setCategory(e.target.value)}>
+                      {CATEGORIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
 
-      {/* Current entries */}
-      <h3 style={{ marginBottom: 8 }}>Entries ({entries.length})</h3>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
-        {entries.map((e) => (
-          <span
-            key={e.id}
-            style={{
-              background: "#1e1e2e",
-              border: "1px solid #333",
-              borderRadius: 6,
-              padding: "6px 12px",
-              fontSize: 13,
-            }}
-          >
-            {e.plate_number ? (
-              <strong>{e.plate_number}</strong>
-            ) : (
-              <span>{e.vehicle_color} {e.vehicle_type}</span>
-            )}
-            {" — "}
-            <span style={{ color: "#f59e0b" }}>{e.category}</span>
-          </span>
-        ))}
-        {entries.length === 0 && <p style={{ color: "#888" }}>No entries yet.</p>}
-      </div>
+                {mode === "attributes" && (
+                  <p className="rounded-xl border border-warn/30 bg-warn-soft/50 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink-2">
+                    Description entries raise <span className="font-semibold text-ink">possible</span>{" "}
+                    matches, deduped over a time window. Expect leads to check, not identifications.
+                  </p>
+                )}
 
-      {/* Alerts feed */}
-      <h3 style={{ marginBottom: 8 }}>Recent alerts</h3>
-      {alertsError && <p style={{ color: "crimson", fontSize: 13 }}>Could not load alerts: {alertsError}</p>}
-      {alerts.length === 0 && !alertsError && (
-        <p style={{ color: "#888", fontSize: 13 }}>No watchlist matches among recent detections.</p>
-      )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {alerts.map((a, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              gap: 12,
-              alignItems: "center",
-              background: "#1e1e2e",
-              border: "1px solid #333",
-              borderRadius: 8,
-              padding: 10,
-            }}
-          >
-            {a.detection.thumbnail_url && (
-              <img
-                src={`/api${a.detection.thumbnail_url}`}
-                alt=""
-                style={{ width: 80, height: 60, objectFit: "cover", borderRadius: 4 }}
+                <Button type="submit" loading={submitting} className="self-start">
+                  {!submitting && <Plus className="h-4 w-4" aria-hidden="true" />}
+                  Add to watchlist
+                </Button>
+
+                {justAdded && (
+                  <p role="status" className="rounded-xl border border-ok/30 bg-ok-soft px-3.5 py-2.5 text-[13px] font-medium text-ok">
+                    Added {justAdded} to the watchlist.
+                  </p>
+                )}
+                {submitError && <ErrorState error={submitError} />}
+              </form>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title={`Entries (${count(entries.length)})`} />
+            <CardBody>
+              {entries.length === 0 ? (
+                <EmptyState
+                  icon={ShieldCheck}
+                  title="Watchlist is empty"
+                  description="Add a plate or a vehicle description above and matches will start arriving on the right."
+                />
+              ) : (
+                <ul className="flex flex-wrap gap-2">
+                  {entries.map((e) => (
+                    <li
+                      key={e.id}
+                      className="inline-flex items-center gap-2 rounded-xl border border-line bg-surface-2/60 px-3 py-1.5 text-[13px]"
+                    >
+                      <span className={e.plate_number ? "font-mono font-semibold tracking-wide text-ink" : "font-medium text-ink"}>
+                        {e.plate_number || vehicleLabel(e.vehicle_color, e.vehicle_type)}
+                      </span>
+                      <Badge tone="gold">{e.category}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+
+        {/* ------------------------------------------------------------ Alerts */}
+        <Card className="self-start">
+          <CardHeader
+            title="Alert feed"
+            description="Matches among recent detections, polled every 5 seconds."
+            actions={
+              alerts.length > 0 ? (
+                <Badge tone="danger" icon={ShieldAlert}>
+                  {count(alerts.length)} active
+                </Badge>
+              ) : null
+            }
+          />
+          <CardBody>
+            {/* Announced as a whole sentence, politely, without stealing focus. */}
+            <p className="sr-only" aria-live="polite">
+              {alerts.length > 0
+                ? `${alerts.length} watchlist ${alerts.length === 1 ? "match" : "matches"} among recent detections.`
+                : "No watchlist matches among recent detections."}
+            </p>
+
+            {alertsError && <ErrorState error={alertsError} onRetry={loadAlerts} className="mb-4" />}
+
+            {alerts.length === 0 && !alertsError ? (
+              <EmptyState
+                icon={ShieldCheck}
+                title="No matches among recent detections"
+                description="This feed stays quiet until a watchlisted vehicle is actually seen. Run the ANPR pipeline against a camera to generate detections."
               />
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {alerts.map((a, i) => (
+                  <AlertRow key={a.detection?.id ?? i} alert={a} />
+                ))}
+              </ul>
             )}
-            <div style={{ flex: 1, fontSize: 13 }}>
-              <span
-                style={{
-                  display: "inline-block",
-                  padding: "2px 8px",
-                  borderRadius: 10,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  marginRight: 8,
-                  background: a.tier === "exact_plate" ? "#14532d" : "#7c2d12",
-                  color: a.tier === "exact_plate" ? "#86efac" : "#fdba74",
-                }}
-              >
-                {a.tier === "exact_plate" ? "EXACT PLATE MATCH" : "POSSIBLE MATCH — BY DESCRIPTION"}
-              </span>
-              {a.detection.plate_number || `${a.detection.vehicle_color || "?"} ${a.detection.vehicle_type || "vehicle"}`}
-              {" on "}
-              <strong>{a.detection.camera_id}</strong>
-              {" — watchlist: "}
-              <span style={{ color: "#f59e0b" }}>{a.watchlist_entry.category}</span>
-            </div>
-          </div>
-        ))}
+          </CardBody>
+        </Card>
       </div>
-    </div>
+    </>
   );
 }

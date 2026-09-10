@@ -1,5 +1,5 @@
 """
-Small shared serialization helpers — kept separate from the routers so
+Small shared serialization helpers - kept separate from the routers so
 detections.py and watchlist.py can both use them without an import cycle
 (detections.py already depends on watchlist.py for match-checking).
 """

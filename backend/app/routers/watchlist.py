@@ -1,14 +1,14 @@
 """
 Watchlist management and match-checking.
 
-Uses a representative dataset only — no real VAHAN/SARTHI/eGujCop/AFIS/NAFIS
+Uses a representative dataset only - no real VAHAN/SARTHI/eGujCop/AFIS/NAFIS
 integration in this build (see PLAN.md Section 4 and Section 9). That's
 explicitly permitted by the official rules; only mention integration
 readiness for those systems in the HLD document, don't build it.
 
 An entry needs plate_number OR (vehicle_type AND vehicle_color), not
 neither (enforced in schemas.py). Attribute-based entries exist for the
-"suspect vehicle, no known plate" case (PLAN.md Section 0b) — a match on
+"suspect vehicle, no known plate" case (PLAN.md Section 0b) - a match on
 one is a narrowing tool, not identification, so it's always returned at a
 lower tier ("attributes") than an exact plate match ("exact_plate").
 """
@@ -56,7 +56,7 @@ def delete_watchlist_entry(
     _role: str = Depends(require_admin),
 ):
     """
-    Admin only — added so synthetic/test watchlist entries can be cleared
+    Admin only - added so synthetic/test watchlist entries can be cleared
     via the API instead of raw SQL (needed twice already this session for
     stray test cameras/detections).
     """
@@ -86,9 +86,9 @@ def recent_alerts(
 ):
     """
     Short-poll this from the Dashboard for a real-time-ish alert feed
-    (PLAN.md Section 0c — no websocket layer needed at this scale).
+    (PLAN.md Section 0c - no websocket layer needed at this scale).
     Recomputed on demand from the last `scan` detections rather than a
-    separate persisted alerts table — simplest thing that works at
+    separate persisted alerts table - simplest thing that works at
     hackathon scale, and watchlist entries can change after a detection
     was recorded without going stale.
     """
@@ -134,10 +134,10 @@ def check_detection_against_watchlist(
     db: Session,
 ) -> schemas.WatchlistMatch:
     """
-    Shared matching logic — called both by the manual /check endpoint and
+    Shared matching logic - called both by the manual /check endpoint and
     automatically from detections.py whenever a new detection is recorded.
     Checks an exact-plate entry first (precise); falls back to an
-    attribute-only entry (type+color, coarse — a narrowing tool, not
+    attribute-only entry (type+color, coarse - a narrowing tool, not
     identification, see module docstring) only when there's no plate match.
     """
     if plate_number:
@@ -160,7 +160,7 @@ def check_detection_against_watchlist(
         )
         if entry:
             logger.warning(
-                "WATCHLIST ALERT (attributes — narrowing match, not identification): %s %s matched (%s)",
+                "WATCHLIST ALERT (attributes - narrowing match, not identification): %s %s matched (%s)",
                 vehicle_color, vehicle_type, entry.category,
             )
             return schemas.WatchlistMatch(matched=True, tier="attributes", entry=entry)

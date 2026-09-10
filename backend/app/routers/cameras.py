@@ -1,7 +1,7 @@
 """
-Model 1 — Centralised CCTV Registry & GIS Foundation.
+Model 1 - Centralised CCTV Registry & GIS Foundation.
 
-Metadata/onboarding only — no video here. Camera IDs should be sourced from
+Metadata/onboarding only - no video here. Camera IDs should be sourced from
 the Sentinel /api/ingest catalogue (bulk import) or entered manually; never
 invent camera IDs that don't correspond to something in the catalogue.
 """
@@ -30,7 +30,7 @@ def onboard_camera(
     actor: str = Depends(get_actor),
     _role: str = Depends(require_admin),
 ):
-    """Manual or single-record onboarding. For bulk CSV/API onboarding, see /bulk and /bulk-csv. Admin only — was missing this check, unlike every other mutating endpoint here."""
+    """Manual or single-record onboarding. For bulk CSV/API onboarding, see /bulk and /bulk-csv. Admin only - was missing this check, unlike every other mutating endpoint here."""
     existing = db.query(models.Camera).filter_by(camera_id=camera.camera_id).first()
     if existing:
         raise HTTPException(status_code=409, detail="camera_id already registered")
@@ -61,7 +61,7 @@ def onboard_cameras_bulk(
     actor: str = Depends(get_actor),
     _role: str = Depends(require_admin),
 ):
-    """Bulk onboarding from a JSON array — e.g. the parsed /api/ingest catalogue. Admin only."""
+    """Bulk onboarding from a JSON array - e.g. the parsed /api/ingest catalogue. Admin only."""
     results = []
     for cam in cameras:
         if db.query(models.Camera).filter_by(camera_id=cam.camera_id).first():
@@ -100,7 +100,7 @@ async def onboard_cameras_csv(
     Expected columns (header row required):
       camera_id,name,latitude,longitude,department,camera_type,ownership,connectivity_status,storage_type,retention_days
 
-    Only camera_id, latitude, longitude, department are required per row —
+    Only camera_id, latitude, longitude, department are required per row -
     the rest are optional and default sensibly. Rows with an already-
     registered camera_id are skipped, not failed.
     """
@@ -138,7 +138,7 @@ async def onboard_cameras_csv(
             or connectivity_status not in ("online", "offline", "unknown")
             or (storage_type is not None and storage_type not in ("cloud", "local"))
         ):
-            # Bad enum value would otherwise 500 at the DB layer mid-batch —
+            # Bad enum value would otherwise 500 at the DB layer mid-batch -
             # skip the row instead of failing the whole import.
             skipped += 1
             continue
@@ -177,7 +177,7 @@ def sync_camera_status(
     """
     Pulls the camera catalogue from cctv.corp8.cloud/cameras.json (authenticated)
     and updates connectivity_status for already-onboarded cameras whose camera_id
-    matches an entry. Does NOT onboard new cameras — health-monitoring sync only.
+    matches an entry. Does NOT onboard new cameras - health-monitoring sync only.
     Admin only.
     """
     import os
@@ -205,7 +205,7 @@ def sync_camera_status(
         cam_id = str(entry.get("id", entry.get("camera_id", "")))
         # `live`/`live_status` isn't always present in the catalogue response
         # (observed missing entirely from cctv.corp8.cloud's /cameras.json).
-        # A missing field means "the upstream API didn't tell us" — treating
+        # A missing field means "the upstream API didn't tell us" - treating
         # that the same as "confirmed offline" would silently overwrite real
         # status with a false negative, so leave the camera's status alone
         # when the field simply isn't there.
@@ -241,7 +241,7 @@ def list_cameras(
 ):
     """
     List registered cameras. A "department" role is scoped to its own
-    department (X-Department header) regardless of the query param —
+    department (X-Department header) regardless of the query param -
     admins/viewers can filter freely via the department query param.
     """
     query = db.query(models.Camera)
@@ -297,7 +297,7 @@ def list_cameras_geojson(
 )
 def gap_analysis(db: Session = Depends(get_db)):
     """
-    Day 3 — rich gap-analysis report generator.
+    Day 3 - rich gap-analysis report generator.
 
     Returns:
       - per_department: breakdown of cameras by department with online/offline/unknown
@@ -334,7 +334,7 @@ def gap_analysis(db: Session = Depends(get_db)):
     for dept in dept_stats.values():
         dept["coverage_pct"] = round((dept["online"] / dept["total"]) * 100, 1) if dept["total"] > 0 else 0.0
 
-    # --- Stale cameras (never synced — still 'unknown') ---
+    # --- Stale cameras (never synced - still 'unknown') ---
     stale = []
     for cam in cameras:
         if cam.connectivity_status == "unknown" or cam.connectivity_status == models.ConnectivityStatus.unknown:
@@ -397,9 +397,9 @@ def delete_camera(
     _role: str = Depends(require_admin),
 ):
     """
-    Admin only — added so stray/test cameras can be cleared via the API
+    Admin only - added so stray/test cameras can be cleared via the API
     instead of raw SQL (needed twice already this session). Refuses to
-    delete a camera with recorded detections rather than cascading —
+    delete a camera with recorded detections rather than cascading -
     those are kept intentionally as the historical source of truth
     (PLAN.md Section 2); decommissioning a camera shouldn't silently
     erase what it already saw.
@@ -412,7 +412,7 @@ def delete_camera(
     if has_detections:
         raise HTTPException(
             status_code=409,
-            detail="camera has recorded detections — those are kept as historical record, so this camera can't be deleted while they exist",
+            detail="camera has recorded detections - those are kept as historical record, so this camera can't be deleted while they exist",
         )
 
     db.delete(camera)

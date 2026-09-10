@@ -1,4 +1,4 @@
-"""Pydantic schemas — request/response shapes for the API layer."""
+"""Pydantic schemas - request/response shapes for the API layer."""
 from datetime import datetime
 from typing import Optional, List, Literal
 from uuid import UUID
@@ -36,9 +36,9 @@ class CameraRead(BaseModel):
         from_attributes = True
 
 
-# ---- Detection (Model 2 — shared by watchlist and tracking) ----
+# ---- Detection (Model 2 - shared by watchlist and tracking) ----
 #
-# plate_number/vehicle_color are optional — most cctv.corp8.cloud footage
+# plate_number/vehicle_color are optional - most cctv.corp8.cloud footage
 # doesn't yield a legible plate (PLAN.md Section 0b), so every vehicle
 # sighting is recorded with whatever subset of identifying info is
 # available. vehicle_type and a thumbnail are expected on every detection
@@ -80,12 +80,12 @@ class RouteStop(BaseModel):
 class VehicleRoute(BaseModel):
     plate_number: Optional[str] = None
     query: Optional[str] = None  # describes an attribute-based query, e.g. "car / red"
-    stops: List[RouteStop]  # chronologically ordered by created_at — see detections.py
+    stops: List[RouteStop]  # chronologically ordered by created_at - see detections.py
 
 
 # ---- Watchlist ----
 #
-# An entry needs plate_number OR (vehicle_type AND vehicle_color) — not
+# An entry needs plate_number OR (vehicle_type AND vehicle_color) - not
 # neither. Attribute-based entries are for the "suspect vehicle, no known
 # plate" case (PLAN.md Section 0b); matches against them are a narrowing
 # tool, not unique identification.

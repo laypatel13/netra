@@ -3,11 +3,11 @@ Debug script from when the cctv.corp8.cloud auth flow was first being
 figured out: confirms login + a direct HLS manifest fetch work with the
 session cookie. Superseded for day-to-day use by the backend's own
 /feeds/catalogue + hls-proxy (backend/app/routers/feeds.py), which does
-the same login/cookie dance for real — kept here as a minimal, dependency-
+the same login/cookie dance for real - kept here as a minimal, dependency-
 free way to isolate "is it the backend, or is it upstream" when something
 in the HLS path breaks.
 
-Takes CLI args instead of reading backend/.env directly — this script
+Takes CLI args instead of reading backend/.env directly - this script
 moved out of backend/ into test/connectivity/, so an implicit relative
 .env lookup would silently break.
 

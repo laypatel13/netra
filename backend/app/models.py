@@ -1,17 +1,17 @@
 """
 Core data model for netra, matching PLAN.md Section 6:
 
-1. Camera        — Model 1 registry. Metadata only, no video. camera_id is
+1. Camera        - Model 1 registry. Metadata only, no video. camera_id is
                     sourced from the Sentinel /api/ingest catalogue, never
                     self-generated.
-2. Detection     — Model 2 output. Shared source of truth for both the
+2. Detection     - Model 2 output. Shared source of truth for both the
                     watchlist/alert path and the cross-camera tracking path.
                     `timestamp_ms` MUST be derived from stream PTS
-                    (CAP_PROP_POS_MSEC or equivalent) — never wall-clock /
+                    (CAP_PROP_POS_MSEC or equivalent) - never wall-clock /
                     frame-arrival time. See PLAN.md Section 8.
-3. WatchlistEntry — Representative watchlist DB. Real VAHAN/eGujCop/etc.
+3. WatchlistEntry - Representative watchlist DB. Real VAHAN/eGujCop/etc.
                     integration is explicitly out of scope for this build.
-4. AuditLog      — basic audit trail for registry actions.
+4. AuditLog      - basic audit trail for registry actions.
 """
 import enum
 import uuid
@@ -56,7 +56,7 @@ class VehicleType(str, enum.Enum):
 
 
 class Camera(Base):
-    """Model 1 — registry & GIS. Metadata only, no video streaming here."""
+    """Model 1 - registry & GIS. Metadata only, no video streaming here."""
     __tablename__ = "cameras"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -76,12 +76,12 @@ class Camera(Base):
 
 class Detection(Base):
     """
-    Model 2 — vehicle sighting event (ANPR + attribute tracking). Single
+    Model 2 - vehicle sighting event (ANPR + attribute tracking). Single
     source of truth for both the watchlist-match/alert path and the
     cross-camera route-reconstruction path.
 
     Every detected vehicle is recorded now, not just ones with a legible
-    plate (PLAN.md Section 0b) — cctv.corp8.cloud's cameras are generic
+    plate (PLAN.md Section 0b) - cctv.corp8.cloud's cameras are generic
     wide-angle surveillance CCTV, not purpose-built ANPR hardware, so a
     legible plate is the exception rather than the rule. plate_number and
     vehicle_color may be null; vehicle_type and thumbnail_path are always
@@ -95,11 +95,11 @@ class Detection(Base):
     plate_number = Column(String, nullable=True, index=True)
     vehicle_type = Column(Enum(VehicleType), nullable=True)
     vehicle_color = Column(String, nullable=True)  # small named palette, see anpr/color.py
-    thumbnail_path = Column(String, nullable=True)  # saved crop — human-checkable fallback for vehicle_color
-    timestamp_ms = Column(Float, nullable=False)  # derived from stream PTS — not wall-clock
+    thumbnail_path = Column(String, nullable=True)  # saved crop - human-checkable fallback for vehicle_color
+    timestamp_ms = Column(Float, nullable=False)  # derived from stream PTS - not wall-clock
     camera_id = Column(String, ForeignKey("cameras.camera_id"), nullable=False)
     confidence = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)  # used for cross-camera ordering — see detections.py
+    created_at = Column(DateTime, default=datetime.utcnow)  # used for cross-camera ordering - see detections.py
 
     camera = relationship("Camera", back_populates="detections")
 
@@ -111,12 +111,12 @@ class Detection(Base):
 
 class WatchlistEntry(Base):
     """
-    Representative watchlist — not a real VAHAN/eGujCop/AFIS/NAFIS integration.
+    Representative watchlist - not a real VAHAN/eGujCop/AFIS/NAFIS integration.
 
     An entry needs plate_number OR (vehicle_type AND vehicle_color), not
-    neither — enforced at the API layer (schemas.py), not here. Attribute-
+    neither - enforced at the API layer (schemas.py), not here. Attribute-
     based entries exist for exactly the "suspect vehicle, no known plate"
-    case (PLAN.md Section 0b) — matching on them is a narrowing tool, not
+    case (PLAN.md Section 0b) - matching on them is a narrowing tool, not
     unique identification, so treat matches on these as lower-confidence
     than an exact plate match (see watchlist.py).
     """
@@ -133,9 +133,9 @@ class WatchlistEntry(Base):
 
 class AuditLog(Base):
     """
-    Day 2 — basic audit trail for registry actions. Supports the "enhanced
+    Day 2 - basic audit trail for registry actions. Supports the "enhanced
     cybersecurity/RBAC/auditability" bonus-consideration item in PLAN.md
-    Section 11. `actor` comes from the (unauthenticated) X-Actor header —
+    Section 11. `actor` comes from the (unauthenticated) X-Actor header -
     this is a demonstration of the trail existing, not real accountability
     until it sits behind real auth.
     """

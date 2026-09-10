@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end API health check — a scripted version of the curl-based
+# End-to-end API health check - a scripted version of the curl-based
 # verification done ad hoc while building this project. Re-runnable and
 # safe to run repeatedly: onboarding/seeding steps tolerate already-seeded
 # data instead of failing on it.
@@ -12,7 +12,7 @@
 # SEED_DIR explicitly).
 #
 # Exits 0 if everything checked out, 1 on the first genuinely unexpected
-# result (not on "already exists" / "already onboarded" — those are fine).
+# result (not on "already exists" / "already onboarded" - those are fine).
 set -u
 
 BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:8010}"
@@ -54,7 +54,7 @@ check "onboard camera WITHOUT admin role is rejected" 403 \
   -d '{"camera_id":"cam-smoketest","latitude":23.0,"longitude":72.5,"department":"Gujarat Police","camera_type":"ip"}'
 
 echo ""
-echo "== Registry: bulk CSV onboarding (idempotent — skips already-onboarded cameras) =="
+echo "== Registry: bulk CSV onboarding (idempotent - skips already-onboarded cameras) =="
 check "bulk CSV onboarding" 200 \
   -X POST "$BACKEND_URL/cameras/bulk-csv" -H "X-Role: admin" \
   -F "file=@$SEED_DIR/cameras_seed.csv"
@@ -67,12 +67,12 @@ if [ "$TOTAL_CAMERAS" -gt 0 ] 2>/dev/null; then
   echo "PASS  registry has $TOTAL_CAMERAS camera(s)"
   PASS=$((PASS + 1))
 else
-  echo "FAIL  registry reports 0 cameras — did bulk-csv onboarding actually run?"
+  echo "FAIL  registry reports 0 cameras - did bulk-csv onboarding actually run?"
   FAIL=$((FAIL + 1))
 fi
 
 echo ""
-echo "== Watchlist: seed representative entries (idempotent — 409 on already-seeded plates is fine) =="
+echo "== Watchlist: seed representative entries (idempotent - 409 on already-seeded plates is fine) =="
 python3 - "$SEED_DIR/watchlist_seed.json" "$BACKEND_URL" <<'PYEOF'
 import json, sys, urllib.request
 
@@ -106,7 +106,7 @@ import cv2, numpy as np
 img = np.zeros((40, 40, 3), dtype='uint8')
 img[:] = (0, 0, 200)
 cv2.imwrite('$THUMB', img)
-" 2>/dev/null || { echo "SKIP  cv2 not available in this environment — can't generate a thumbnail, skipping detection checks"; THUMB=""; }
+" 2>/dev/null || { echo "SKIP  cv2 not available in this environment - can't generate a thumbnail, skipping detection checks"; THUMB=""; }
 
 if [ -n "$THUMB" ]; then
   check "record a plate-matching detection (cam=$CAM_ID)" 200 \

@@ -1,5 +1,5 @@
 """
-Model 2 — Feed catalogue proxy.
+Model 2 - Feed catalogue proxy.
 
 The browser can't consume RTSP directly. This router:
   1. Authenticates with cctv.corp8.cloud (POST /auth/login → session cookie)
@@ -15,7 +15,7 @@ Access model (from the Sentinel Integrator's Guide):
   - WebRTC:  http://email:password@103.250.160.189:8889/stream/<id>/whep
   The @ in the email must be percent-encoded as %40.
 
-Camera IDs are cam01–cam30 (not numeric).
+Camera IDs are cam01-cam30 (not numeric).
 """
 import json
 import re
@@ -213,7 +213,7 @@ def _resolve_stream_urls(host: str, camera_entry: dict) -> dict:
     cctv_host = os.getenv("CCTV_HOST", "cctv.corp8.cloud").strip()
     direct_ip = os.getenv("CCTV_DIRECT_IP", "103.250.160.189").strip()
 
-    # Camera ID — the new domain uses cam01–cam30 format
+    # Camera ID - the new domain uses cam01-cam30 format
     cam_id = str(camera_entry.get("id", camera_entry.get("camera_id", "")))
 
     if host == cctv_host:
@@ -226,7 +226,7 @@ def _resolve_stream_urls(host: str, camera_entry: dict) -> dict:
         whep = f"http://{auth_prefix}@{direct_ip}:8889/stream/{cam_id}/whep"
         # No progressive-MP4 endpoint exists on cctv.corp8.cloud (Integrator's Guide
         # only documents HLS/RTSP/WHEP) and a raw https://<host>/<id> hit from the
-        # browser has no session cookie anyway — it would always 401/404. Don't
+        # browser has no session cookie anyway - it would always 401/404. Don't
         # hand the frontend a fallback URL that can never work; HlsPlayer instead
         # retries HLS itself with backoff, per PLAN.md Section 8.
         mp4 = None
@@ -266,7 +266,7 @@ def get_feed_catalogue(
     if not h:
         raise HTTPException(
             status_code=400,
-            detail="No feed host configured — set CCTV_HOST in .env or pass ?host=",
+            detail="No feed host configured - set CCTV_HOST in .env or pass ?host=",
         )
 
     catalogue = _fetch_catalogue(h)
@@ -275,7 +275,7 @@ def get_feed_catalogue(
         cam_id = str(entry.get("id", entry.get("camera_id", "")))
         urls = _resolve_stream_urls(h, entry)
 
-        # Normalize field names — cameras.json may use different keys
+        # Normalize field names - cameras.json may use different keys
         name = entry.get("name", entry.get("location", f"Camera {cam_id}"))
         live = entry.get("live", entry.get("live_status", False))
         codec = entry.get("codec", "unknown") or "unknown"
@@ -410,7 +410,7 @@ def hls_proxy(camera_id: str, path: str):
             },
         )
 
-    # For .ts segments — stream through directly
+    # For .ts segments - stream through directly
     def iter_content():
         for chunk in resp.iter_content(chunk_size=65536):
             yield chunk

@@ -1,0 +1,315 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   Netra design tokens
+   --------------------------------------------------------------------------
+   Palette direction: "Quiet Canvas". Near-neutral greys carry the entire
+   interface - chrome, surfaces, borders, type - and saturated colour is spent
+   only where it does a job:
+
+     brand blue  interactive only (links, primary buttons, active nav)
+     highlight   the signal yellow, reserved for watchlist/alert moments and
+                 the hero highlight; used as a FILL with dark ink on top
+     ok/warn/danger  status semantics, never decoration
+
+   An alert reads as an alert here because it is the only thing on the screen
+   that isn't neutral. Spending yellow on decoration is what breaks that, so
+   don't.
+
+   Values are "R G B" channel triplets so Tailwind opacity modifiers work
+   (see tailwind.config.js).
+
+   Contrast: every foreground/background pair used for text clears WCAG AA
+   (4.5:1). Yellow can't do that as a text or stroke colour on a light ground,
+   which is why --c-highlight is fill-only and --c-gold-ink is the dark ink
+   that goes ON the yellow (and reads as text anywhere else). --c-gold is the
+   decorative border/tint companion, non-text use only.
+   ========================================================================== */
+
+:root {
+  --c-bg: 247 247 248;
+  --c-surface: 255 255 255;
+  --c-surface-2: 239 239 241;
+  --c-surface-3: 229 229 232;
+
+  --c-ink: 28 28 31;
+  --c-ink-2: 74 74 80;
+  --c-ink-3: 102 102 107;
+
+  --c-border: 226 226 229;
+  --c-border-strong: 201 201 206;
+  --c-control-border: 142 142 150;
+
+  --c-brand: 22 103 214;
+  --c-brand-hover: 18 83 159;
+  --c-brand-soft: 232 240 254;
+  --c-on-brand: 255 255 255;
+
+  --c-azure: 26 115 232;
+  --c-gold: 224 178 0;
+  --c-gold-ink: 61 47 0;
+  --c-highlight: 255 204 0;
+  --c-on-highlight: 36 28 0;
+
+  --c-ok: 22 124 51;
+  --c-ok-soft: 227 245 233;
+  --c-warn: 160 82 0;
+  --c-warn-soft: 252 235 221;
+  --c-danger: 197 34 29;
+  --c-danger-soft: 251 229 227;
+
+  --shadow-xs: 0 1px 2px rgb(18 18 20 / 0.05);
+  --shadow-card: 0 1px 2px rgb(18 18 20 / 0.04), 0 6px 16px -8px rgb(18 18 20 / 0.12);
+  --shadow-lift: 0 2px 4px rgb(18 18 20 / 0.05), 0 14px 32px -12px rgb(18 18 20 / 0.18);
+  --shadow-pop: 0 18px 50px -14px rgb(18 18 20 / 0.28);
+
+  --icon-stroke: 1.25;
+  --icon-stroke-lg: 1;
+  --font-display: Literata, Georgia, "Times New Roman", serif;
+  --font-small: Poppins, system-ui, -apple-system, sans-serif;
+  --map-tint: none;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --c-bg: 19 19 22;
+  --c-surface: 26 26 30;
+  --c-surface-2: 33 33 38;
+  --c-surface-3: 42 42 48;
+
+  --c-ink: 237 237 239;
+  --c-ink-2: 185 185 192;
+  --c-ink-3: 142 142 150;
+
+  --c-border: 48 48 54;
+  --c-border-strong: 69 69 77;
+  --c-control-border: 110 110 120;
+
+  --c-brand: 110 168 255;
+  --c-brand-hover: 143 188 255;
+  --c-brand-soft: 22 35 58;
+  --c-on-brand: 11 18 32;
+
+  --c-azure: 127 180 255;
+  --c-gold: 255 222 89;
+  --c-gold-ink: 255 233 166;
+  --c-highlight: 255 222 89;
+  --c-on-highlight: 36 28 0;
+
+  --c-ok: 74 222 128;
+  --c-ok-soft: 16 40 26;
+  --c-warn: 242 153 74;
+  --c-warn-soft: 51 34 15;
+  --c-danger: 255 107 91;
+  --c-danger-soft: 58 23 20;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.5), 0 6px 18px -10px rgb(0 0 0 / 0.7);
+  --shadow-lift: 0 2px 6px rgb(0 0 0 / 0.5), 0 16px 36px -14px rgb(0 0 0 / 0.8);
+  --shadow-pop: 0 20px 56px -16px rgb(0 0 0 / 0.85);
+
+  /* OSM raster tiles are light-only; tint them so the map doesn't blast the
+     operator during a long night shift. */
+  --icon-stroke: 1.2;
+  --icon-stroke-lg: 0.95;
+  --map-tint: invert(1) hue-rotate(180deg) brightness(0.86) contrast(0.92) saturate(0.62);
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bg font-sans text-[15px] leading-relaxed text-ink antialiased;
+    margin: 0;
+    min-height: 100dvh;
+  }
+
+  /* Headings inherit the UI sans by default and opt INTO the display serif with
+     `font-display`. Setting the serif here instead would force it onto 15px card
+     titles too, which is exactly the tier collision this split exists to avoid. */
+  h1, h2, h3, h4 {
+    @apply font-semibold tracking-tight text-ink;
+    text-wrap: balance;
+  }
+
+  /* Literata carries an optical-size axis, so let the browser drive it: the same
+     file then draws different proportions for a 24px title and a 60px hero,
+     rather than scaling one outline up. */
+  .font-display {
+    font-optical-sizing: auto;
+  }
+
+  /* Visible focus everywhere, on both themes. Never remove this. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-brand ring-offset-2 ring-offset-bg;
+    border-radius: 0.375rem;
+  }
+
+  ::placeholder {
+    @apply text-ink-3;
+  }
+
+  ::selection {
+    background: rgb(var(--c-highlight));
+    color: rgb(var(--c-on-highlight));
+  }
+
+  /* Numeric data (plates, counts, timestamps) must not jitter as it updates. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Small tier (<=13px) is set in Poppins.
+     Currently the same face as `sans`, so this is a no-op by default - it is
+     kept as the lever that lets the small tier diverge from the UI tier again
+     (and pins Poppins at small if the UI sans is ever changed).
+     Bound to the size utilities rather than to ~60 call sites, so the whole
+     label/meta/dense layer moves together and can be reverted from one token.
+     This sits in @layer base, so the `font-mono` and `font-display` utilities
+     still win where they're applied - plate numbers and camera IDs stay mono. */
+  .text-2xs,
+  .text-\[10px\],
+  .text-\[12px\],
+  .text-\[13px\] {
+    font-family: var(--font-small);
+  }
+}
+
+@layer components {
+  /* Hero highlight: a signal-yellow marker block behind a phrase. This is the
+     one place the signal colour is spent on brand rather than on an alert -
+     it's a marketing surface, and the operator screens keep yellow exclusive.
+     `isolation: isolate` keeps the block inside this element's own stacking
+     context - a negative z-index escapes it and hides behind any opaque
+     ancestor background instead. */
+  .mark {
+    @apply relative inline-block;
+    /* Horizontal padding only. Vertical padding made this inline-block taller
+       than its line box, so the top edge pushed up into the previous line and
+       clipped that line's descenders. The line box at the hero's line-height
+       already extends far enough below the baseline to contain a descender, so
+       the box needs no vertical padding to hold its own ink. */
+    padding: 0 0.22em;
+    isolation: isolate;
+  }
+  .mark::before {
+    content: "";
+    @apply absolute rounded-lg bg-highlight;
+    /* The band is shifted down rather than made taller. Literata declares a
+       font descent of only ~0.07em while its glyphs actually reach ~0.23em
+       below the baseline, so a band aligned to the line box sits too high: it
+       clipped this line's descenders and its top edge collided with the
+       previous line's. Same height, moved to where the ink really is. */
+    top: 0.11em;
+    bottom: -0.11em;
+    left: 0;
+    right: 0;
+    z-index: 0;
+  }
+  .mark > * {
+    @apply relative;
+    z-index: 1;
+    color: rgb(var(--c-on-highlight));
+  }
+
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-surface-2;
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0;
+    background: linear-gradient(90deg, transparent, rgb(var(--c-surface-3) / 0.9), transparent);
+    animation: shimmer 1.6s infinite;
+  }
+  @keyframes shimmer {
+    100% { transform: translateX(100%); }
+  }
+}
+
+/* --- Icon stroke ---------------------------------------------------------
+   Deliberately OUTSIDE @layer base. Tailwind tree-shakes custom layer rules
+   whose selector classes it can't find in the content globs, and `lucide` is
+   added by lucide-react at runtime - it never appears literally in the JSX, so
+   a bare `.lucide` rule inside a layer gets dropped from the build. (That is
+   exactly what happened: `.lucide.h-8` survived because `h-8` IS in the source,
+   while the plain `.lucide` rule silently vanished and small icons kept
+   Lucide's default 2px.) Plain top-level CSS is never tree-shaken.
+
+   Lucide writes stroke-width as a presentation attribute, which any CSS rule
+   outranks, so this thins every icon at once. */
+.lucide {
+  stroke-width: var(--icon-stroke);
+}
+
+/* Stroke reads heavier the larger the icon gets, so one global value looks
+   right at 16px and bulky at 32px. Large icons get a hairline instead. */
+.lucide.h-7,
+.lucide.h-8,
+.lucide.h-9,
+.lucide.h-10,
+.lucide.h-11,
+.lucide.h-12 {
+  stroke-width: var(--icon-stroke-lg);
+}
+
+/* --- Leaflet, themed ----------------------------------------------------- */
+.leaflet-container {
+  @apply bg-surface-2 font-sans text-ink;
+}
+.leaflet-tile-pane {
+  filter: var(--map-tint);
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  @apply border border-line bg-surface text-ink shadow-lift;
+}
+.leaflet-popup-content-wrapper {
+  @apply rounded-xl;
+}
+.leaflet-popup-content {
+  @apply m-0 p-3 text-[13px] leading-normal;
+}
+.leaflet-popup-close-button {
+  @apply !text-ink-3 hover:!text-ink;
+}
+.leaflet-control-zoom a {
+  @apply !border-line !bg-surface !text-ink hover:!bg-surface-2;
+}
+.leaflet-control-attribution {
+  @apply !bg-surface/85 !text-2xs !text-ink-3;
+}
+.leaflet-control-attribution a {
+  @apply !text-azure;
+}
+
+/* --- Scrollbars ---------------------------------------------------------- */
+@supports (scrollbar-width: thin) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--c-border-strong)) transparent;
+  }
+}
+
+/* --- Reduced motion ------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

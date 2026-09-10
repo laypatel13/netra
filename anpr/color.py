@@ -7,9 +7,9 @@ car") instead of being dropped entirely.
 
 Known limitation, stated plainly rather than hidden: color read off a small
 CCTV crop at night or under sodium streetlight/headlight glare is
-unreliable — a white car under orange sodium light can easily read as
+unreliable - a white car under orange sodium light can easily read as
 "orange". This is exactly why every detection also stores a thumbnail
-(see pipeline.py) — the computed label is a coarse hint for search/alerts,
+(see pipeline.py) - the computed label is a coarse hint for search/alerts,
 the thumbnail is what a human actually verifies a match against. Do not
 treat this as a precise or trustworthy-alone signal.
 """
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-# Small named palette, defined in HSV. Order matters — checked top to
+# Small named palette, defined in HSV. Order matters - checked top to
 # bottom, first match wins. Achromatic buckets (black/white/gray) are
 # checked via saturation/value; chromatic buckets via hue range.
 _HUE_BUCKETS = [
@@ -53,7 +53,7 @@ def dominant_color(crop) -> ColorReading:
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
 
-    # Keep only pixels with real color information — not blown-out glare,
+    # Keep only pixels with real color information - not blown-out glare,
     # not near-black shadow.
     valid = (v > 40) & (v < 240)
     if not np.any(valid):

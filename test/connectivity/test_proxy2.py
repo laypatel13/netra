@@ -6,7 +6,7 @@ about which path serves it. See feeds.py's hls_proxy() for how the backend
 actually handles this (rewrites the manifest's URI to a relative path so
 the browser fetches it through the proxy either way).
 
-Takes CLI args instead of reading backend/.env directly — this script
+Takes CLI args instead of reading backend/.env directly - this script
 moved out of backend/ into test/connectivity/, so an implicit relative
 .env lookup would silently break.
 

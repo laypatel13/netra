@@ -1,41 +1,38 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Building2, Download, Percent, Camera, CircleSlash } from "lucide-react";
+import PageHeader from "../components/PageHeader.jsx";
+import { Card, CardBody, CardHeader, SectionHeading } from "../components/ui/Card.jsx";
+import Stat, { Meter } from "../components/ui/Stat.jsx";
+import Button from "../components/ui/Button.jsx";
+import Badge from "../components/ui/Badge.jsx";
+import { EmptyState, ErrorState, SkeletonGrid } from "../components/ui/Feedback.jsx";
+import { api } from "../lib/api.js";
+import { count, pct } from "../lib/format.js";
 
 /**
- * Day 3 — Gap Analysis Report page.
- *
- * Fetches the rich coverage report from GET /cameras/gap-analysis and renders:
- *   - Summary stats (total cameras, coverage %, departments onboarded vs missing)
- *   - Per-department cards with online/offline/unknown counts and coverage bar
- *   - Stale cameras list (never synced)
- *   - Missing departments list (known 26 minus what's onboarded)
- *   - Export as JSON button
+ * Model 1 - coverage report. Surfaces what the registry *doesn't* have as
+ * prominently as what it does: a department with zero cameras is the finding,
+ * not an empty row to scroll past.
  */
 export default function GapAnalysis() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    fetch("/api/cameras/gap-analysis")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        setReport(data);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(e.message);
-        setLoading(false);
-      });
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api("/cameras/gap-analysis")
+      .then(setReport)
+      .catch(setError)
+      .finally(() => setLoading(false));
   }, []);
+
+  useEffect(load, [load]);
 
   function exportJson() {
     if (!report) return;
-    const blob = new Blob([JSON.stringify(report, null, 2)], {
-      type: "application/json",
-    });
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -46,200 +43,161 @@ export default function GapAnalysis() {
 
   if (loading) {
     return (
-      <div>
-        <h2>Gap analysis report</h2>
-        <p style={{ color: "#999" }}>Loading report…</p>
-      </div>
+      <>
+        <PageHeader title="Gap analysis" description="Loading the coverage report…" />
+        <SkeletonGrid items={7} className="grid-cols-2 lg:grid-cols-4" />
+      </>
     );
   }
 
   if (error) {
     return (
-      <div>
-        <h2>Gap analysis report</h2>
-        <p style={{ color: "crimson" }}>Could not load report: {error}</p>
-      </div>
+      <>
+        <PageHeader title="Gap analysis" />
+        <ErrorState error={error} onRetry={load} />
+      </>
     );
   }
 
   const { summary, per_department, stale_cameras, missing_departments } = report;
-  const deptEntries = Object.entries(per_department || {}).sort(
-    (a, b) => b[1].total - a[1].total
-  );
+  const deptEntries = Object.entries(per_department || {}).sort((a, b) => b[1].total - a[1].total);
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Gap analysis report</h2>
-        <button onClick={exportJson} style={{ padding: "6px 16px", fontSize: 13 }}>
-          Export JSON
-        </button>
-      </div>
+    <>
+      <PageHeader
+        title="Gap analysis"
+        description="Per-department coverage across the registry, plus the departments and cameras the network still can't see."
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge tone="brand">Model 1</Badge>
+            <Button size="sm" variant="secondary" onClick={exportJson}>
+              <Download className="h-4 w-4" aria-hidden="true" />
+              Export JSON
+            </Button>
+          </div>
+        }
+      />
 
-      {/* Summary cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-          gap: 12,
-          marginBottom: 24,
-        }}
-      >
-        <SummaryCard label="Total cameras" value={summary.total_cameras} />
-        <SummaryCard
+      <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Total cameras" value={count(summary.total_cameras)} icon={Camera} />
+        <Stat
           label="Coverage"
-          value={`${summary.coverage_pct}%`}
-          color={summary.coverage_pct >= 75 ? "#22c55e" : summary.coverage_pct >= 40 ? "#f59e0b" : "#ef4444"}
+          value={pct(summary.coverage_pct)}
+          icon={Percent}
+          tone={summary.coverage_pct >= 75 ? "ok" : summary.coverage_pct >= 40 ? "warn" : "danger"}
         />
-        <SummaryCard label="Online" value={summary.online} color="#22c55e" />
-        <SummaryCard label="Offline" value={summary.offline} color="#ef4444" />
-        <SummaryCard label="Unknown" value={summary.unknown} color="#f59e0b" />
-        <SummaryCard label="Depts onboarded" value={summary.departments_onboarded} />
-        <SummaryCard label="Depts missing" value={summary.departments_missing} color={summary.departments_missing > 0 ? "#ef4444" : "#22c55e"} />
+        <Stat label="Departments onboarded" value={count(summary.departments_onboarded)} icon={Building2} />
+        <Stat
+          label="Departments missing"
+          value={count(summary.departments_missing)}
+          icon={CircleSlash}
+          tone={summary.departments_missing > 0 ? "danger" : "ok"}
+        />
+        <Stat label="Online" value={count(summary.online)} tone="ok" />
+        <Stat label="Offline" value={count(summary.offline)} tone="danger" />
+        <Stat
+          label="Unknown"
+          value={count(summary.unknown)}
+          tone="warn"
+          hint="never synced"
+        />
       </div>
 
-      {/* Per-department breakdown */}
-      <h3>Department breakdown</h3>
+      {/* ------------------------------------------------- Department breakdown */}
+      <SectionHeading
+        title="Department breakdown"
+        description="Sorted by camera count. The bar shows that department's own coverage."
+      />
       {deptEntries.length === 0 ? (
-        <p style={{ color: "#888" }}>No cameras onboarded yet.</p>
+        <EmptyState
+          title="No cameras onboarded yet"
+          description="Import a camera CSV from the registry page to populate this report."
+          className="mb-8"
+        />
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-            gap: 12,
-            marginBottom: 24,
-          }}
-        >
+        <div className="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {deptEntries.map(([dept, stats]) => (
-            <DeptCard key={dept} dept={dept} stats={stats} />
+            <div key={dept} className="rounded-2xl border border-line bg-surface p-4 shadow-card">
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-[14px] font-medium leading-snug text-ink">{dept}</h3>
+                <span className="tnum shrink-0 text-[13px] font-medium text-ink-2">
+                  {pct(stats.coverage_pct || 0)}
+                </span>
+              </div>
+
+              <div className="tnum mt-3 flex flex-wrap gap-x-4 gap-y-1 text-2xs">
+                <span className="inline-flex items-center gap-1.5 text-ok">
+                  <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                  {count(stats.online)} online
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-danger">
+                  <span className="h-1.5 w-1.5 rounded-full bg-danger" aria-hidden="true" />
+                  {count(stats.offline)} offline
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-warn">
+                  <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
+                  {count(stats.unknown)} unknown
+                </span>
+              </div>
+
+              <Meter value={stats.coverage_pct || 0} label={`${dept} coverage`} className="mt-3" />
+              <p className="tnum mt-1.5 text-2xs text-ink-3">
+                {count(stats.total)} camera{stats.total === 1 ? "" : "s"} total
+              </p>
+            </div>
           ))}
         </div>
       )}
 
-      {/* Missing departments */}
-      {missing_departments && missing_departments.length > 0 && (
-        <>
-          <h3 style={{ color: "#ef4444" }}>
-            Missing departments ({missing_departments.length})
-          </h3>
-          <p style={{ color: "#999", fontSize: 13, marginTop: 0 }}>
-            Known Gujarat government departments with zero onboarded cameras.
-          </p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
-            {missing_departments.map((d) => (
-              <span
-                key={d}
-                style={{
-                  background: "#3b1c1c",
-                  color: "#fca5a5",
-                  padding: "4px 10px",
-                  borderRadius: 4,
-                  fontSize: 12,
-                }}
-              >
-                {d}
-              </span>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* Stale cameras */}
-      {stale_cameras && stale_cameras.length > 0 && (
-        <>
-          <h3 style={{ color: "#f59e0b" }}>
-            Stale cameras ({stale_cameras.length})
-          </h3>
-          <p style={{ color: "#999", fontSize: 13, marginTop: 0 }}>
-            Cameras in &quot;unknown&quot; status — never synced via /sync-status.
-          </p>
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: 13,
-              marginBottom: 24,
-            }}
-          >
-            <thead>
-              <tr style={{ borderBottom: "1px solid #333", textAlign: "left" }}>
-                <th style={{ padding: 6 }}>Camera ID</th>
-                <th style={{ padding: 6 }}>Name</th>
-                <th style={{ padding: 6 }}>Department</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stale_cameras.map((cam) => (
-                <tr key={cam.camera_id} style={{ borderBottom: "1px solid #222" }}>
-                  <td style={{ padding: 6, fontFamily: "monospace" }}>{cam.camera_id}</td>
-                  <td style={{ padding: 6 }}>{cam.name || "—"}</td>
-                  <td style={{ padding: 6 }}>{cam.department}</td>
-                </tr>
+      {/* ------------------------------------------------- Missing departments */}
+      {missing_departments?.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader
+            title={`Missing departments (${missing_departments.length})`}
+            description="Known Gujarat government departments with zero onboarded cameras. This gap is the finding - it's what the registry exists to surface."
+          />
+          <CardBody>
+            <ul className="flex flex-wrap gap-2">
+              {missing_departments.map((d) => (
+                <li key={d}>
+                  <Badge tone="danger">{d}</Badge>
+                </li>
               ))}
-            </tbody>
-          </table>
-        </>
+            </ul>
+          </CardBody>
+        </Card>
       )}
-    </div>
-  );
-}
 
-
-function SummaryCard({ label, value, color = "#e2e8f0" }) {
-  return (
-    <div
-      style={{
-        background: "#1e1e2e",
-        border: "1px solid #333",
-        borderRadius: 8,
-        padding: 14,
-        textAlign: "center",
-      }}
-    >
-      <div style={{ fontSize: 24, fontWeight: 700, color }}>{value}</div>
-      <div style={{ fontSize: 11, color: "#999", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-        {label}
-      </div>
-    </div>
-  );
-}
-
-
-function DeptCard({ dept, stats }) {
-  const pct = stats.coverage_pct || 0;
-  const barColor = pct >= 75 ? "#22c55e" : pct >= 40 ? "#f59e0b" : "#ef4444";
-
-  return (
-    <div
-      style={{
-        background: "#1e1e2e",
-        border: "1px solid #333",
-        borderRadius: 8,
-        padding: 14,
-      }}
-    >
-      <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>{dept}</div>
-      <div style={{ display: "flex", gap: 12, fontSize: 12, marginBottom: 8 }}>
-        <span style={{ color: "#22c55e" }}>● {stats.online} online</span>
-        <span style={{ color: "#ef4444" }}>● {stats.offline} offline</span>
-        <span style={{ color: "#f59e0b" }}>● {stats.unknown} unknown</span>
-      </div>
-      {/* Coverage bar */}
-      <div style={{ background: "#333", borderRadius: 4, height: 6, overflow: "hidden" }}>
-        <div
-          style={{
-            width: `${pct}%`,
-            height: "100%",
-            background: barColor,
-            borderRadius: 4,
-            transition: "width 0.3s ease",
-          }}
-        />
-      </div>
-      <div style={{ fontSize: 11, color: "#888", marginTop: 4, textAlign: "right" }}>
-        {pct}% coverage ({stats.total} total)
-      </div>
-    </div>
+      {/* ------------------------------------------------------ Stale cameras */}
+      {stale_cameras?.length > 0 && (
+        <Card>
+          <CardHeader
+            title={`Stale cameras (${stale_cameras.length})`}
+            description="Status “unknown” - never synced. The sandbox feed doesn't publish a live-status field, so these stay unknown rather than being reported as confirmed offline."
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-[13px]">
+              <caption className="sr-only">Cameras that have never reported a connectivity status</caption>
+              <thead>
+                <tr className="border-b border-line text-left text-2xs uppercase tracking-[0.06em] text-ink-3">
+                  <th scope="col" className="px-5 py-2.5 font-semibold">Camera ID</th>
+                  <th scope="col" className="px-5 py-2.5 font-semibold">Name</th>
+                  <th scope="col" className="px-5 py-2.5 font-semibold">Department</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stale_cameras.map((cam) => (
+                  <tr key={cam.camera_id} className="border-b border-line/60 last:border-0 hover:bg-surface-2/60">
+                    <td className="px-5 py-2.5 font-mono text-ink">{cam.camera_id}</td>
+                    <td className="px-5 py-2.5 text-ink-2">{cam.name || "-"}</td>
+                    <td className="px-5 py-2.5 text-ink-2">{cam.department}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </>
   );
 }

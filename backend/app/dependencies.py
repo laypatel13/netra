@@ -1,5 +1,5 @@
 """
-Minimal RBAC — header-based role/department scoping.
+Minimal RBAC - header-based role/department scoping.
 
 Intentionally lightweight for hackathon speed, not a production auth system.
 Swap for real JWT/session auth before anything resembling production. This
@@ -7,9 +7,9 @@ exists to demonstrate the "enhanced cybersecurity/RBAC/auditability" bonus
 consideration item from PLAN.md Section 11, not to be a hardened auth layer.
 
 Roles:
-  admin      — can onboard/bulk-onboard/sync status, read audit log
-  department — read-only, scoped to their own department (X-Department header)
-  viewer     — read-only, unscoped (default if no X-Role header sent)
+  admin      - can onboard/bulk-onboard/sync status, read audit log
+  department - read-only, scoped to their own department (X-Department header)
+  viewer     - read-only, unscoped (default if no X-Role header sent)
 """
 from typing import Optional
 
@@ -29,7 +29,7 @@ def get_department(x_department: Optional[str] = Header(default=None)) -> Option
 
 
 def get_actor(x_actor: str = Header(default="unknown")) -> str:
-    """Who's making the request — for audit logging. Not authentication."""
+    """Who's making the request - for audit logging. Not authentication."""
     return x_actor
 
 

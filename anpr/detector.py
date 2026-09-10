@@ -1,15 +1,15 @@
 """
-Vehicle detector — thin wrapper around a pretrained YOLOv8 (COCO) model.
+Vehicle detector - thin wrapper around a pretrained YOLOv8 (COCO) model.
 
 COCO has no "license plate" class, so this only localizes vehicles
 (car/motorcycle/bus/truck). Plate text itself is found by running OCR's own
-text-detection over the vehicle crop — see plate_reader.py. That combination
+text-detection over the vehicle crop - see plate_reader.py. That combination
 (generic vehicle detector + OCR's built-in text detector) avoids needing a
 custom-trained plate-detection model, which isn't feasible on an 11-day
 hackathon timeline.
 
 Running OCR on the full frame instead of a vehicle crop mostly finds noise
-(signage, shopfronts, banners) — cropping to vehicles first is what keeps
+(signage, shopfronts, banners) - cropping to vehicles first is what keeps
 false positives down before the expensive OCR step even runs.
 """
 from dataclasses import dataclass
@@ -32,13 +32,13 @@ class VehicleBox:
 
 class VehicleDetector:
     def __init__(self, model_name: str = "yolov8n.pt", conf_threshold: float = 0.4):
-        # First run downloads weights from ultralytics' GitHub releases —
+        # First run downloads weights from ultralytics' GitHub releases -
         # needs network access to github.com / release-assets.githubusercontent.com.
         self.model = YOLO(model_name)
         self.conf_threshold = conf_threshold
 
     def detect(self, frame) -> list[VehicleBox]:
-        """No fixed input shape assumed — ultralytics handles per-frame
+        """No fixed input shape assumed - ultralytics handles per-frame
         resizing internally, so mixed resolutions across cameras (PLAN.md
         Section 8) don't need special-casing here."""
         results = self.model.predict(frame, verbose=False, conf=self.conf_threshold)

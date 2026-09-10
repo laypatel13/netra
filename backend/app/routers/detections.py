@@ -1,19 +1,19 @@
 """
-Model 2 — detection ingestion and cross-camera tracking (plate + attributes).
+Model 2 - detection ingestion and cross-camera tracking (plate + attributes).
 
 This is the shared source of truth consumed by both the watchlist/alert path
 (watchlist.py) and the GIS route-reconstruction path (this file's /route and
 /search endpoints). The ANPR pipeline should POST here for every detected
-vehicle — not just ones with a legible plate (PLAN.md Section 0b): most
+vehicle - not just ones with a legible plate (PLAN.md Section 0b): most
 cctv.corp8.cloud footage is generic wide-angle surveillance CCTV, not
 purpose-built ANPR hardware, so a legible plate is the exception. Every
-detection carries a PTS-derived timestamp_ms — never wall-clock time — per
+detection carries a PTS-derived timestamp_ms - never wall-clock time - per
 PLAN.md Section 8.
 
 Ordering note: cross-camera queries here (/plate, /route, /search) order by
 `created_at` (row-insert wall-clock time), not `timestamp_ms` (PTS).
 timestamp_ms is PTS-derived per the sandbox protocol rules, but each
-camera's PTS is relative to when *that specific RTSP connection* started —
+camera's PTS is relative to when *that specific RTSP connection* started -
 it isn't a shared clock across cameras, and these are looping recordings
 that reset at each loop point. Comparing raw PTS values between two
 different cameras' detections isn't meaningful, so it can't be used to
@@ -24,7 +24,7 @@ protocol compliance and any future within-camera analysis (dedup, velocity),
 where PTS is exactly the right thing to use.
 
 Attribute-based tracking (vehicle_type + vehicle_color) is a narrowing
-tool, not identification (PLAN.md Section 0b) — "red car" will match many
+tool, not identification (PLAN.md Section 0b) - "red car" will match many
 vehicles. It complements plate ANPR for exactly the case where a plate
 isn't legible, the same way a real investigation narrows suspects by
 vehicle description. /search results should be read as candidate
@@ -66,11 +66,11 @@ async def record_detection(
 ):
     """
     Called by the ANPR pipeline for every detected vehicle, not just ones
-    with a legible plate (PLAN.md Section 0b) — plate_number/vehicle_color
+    with a legible plate (PLAN.md Section 0b) - plate_number/vehicle_color
     may be omitted. Multipart (not JSON) so the crop thumbnail can be
     uploaded alongside the detection fields in one request.
 
-    Also triggers a watchlist check (plate-exact or attribute-narrowed) —
+    Also triggers a watchlist check (plate-exact or attribute-narrowed) -
     real push/websocket alert delivery isn't built, GET
     /watchlist/alerts/recent is the short-poll path the Dashboard uses.
     """
@@ -79,7 +79,7 @@ async def record_detection(
 
     camera = db.query(models.Camera).filter_by(camera_id=camera_id).first()
     if not camera:
-        raise HTTPException(status_code=404, detail="camera_id not registered — onboard it first")
+        raise HTTPException(status_code=404, detail="camera_id not registered - onboard it first")
 
     db_detection = models.Detection(
         plate_number=plate_number,
@@ -140,12 +140,12 @@ def search_by_attributes(
 ):
     """
     The plate-less counterpart to /route/{plate_number} (PLAN.md Section 0b)
-    — for a suspect vehicle with no known plate. Results are candidate
+    - for a suspect vehicle with no known plate. Results are candidate
     sightings ordered chronologically by created_at, same as /route; unlike
     a plate match, multiple different real vehicles may share the same
     type+color, so treat this as a narrowed list to cross-reference by time
     and route plausibility, not a confirmed single-vehicle path. since/until
-    scope the search to a time window — without them this searches the
+    scope the search to a time window - without them this searches the
     entire history, which only gets noisier as real detection volume grows.
     """
     if vehicle_type not in VEHICLE_TYPES:
@@ -172,9 +172,9 @@ def search_by_attributes(
 def reconstruct_route(plate_number: str, db: Session = Depends(get_db)):
     """
     The official test case: given a plate, return every camera it appeared
-    on, in chronological order — e.g. Camera 1 -> Camera 13 -> Camera 15.
+    on, in chronological order - e.g. Camera 1 -> Camera 13 -> Camera 15.
     This is what gets rendered as a route on the GIS map. Ordered by
-    created_at, not timestamp_ms — see the module docstring for why.
+    created_at, not timestamp_ms - see the module docstring for why.
     """
     detections = (
         db.query(models.Detection)
