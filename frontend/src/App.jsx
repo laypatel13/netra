@@ -1,8 +1,10 @@
 import { Suspense, lazy, useEffect, useRef } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { advanceRing } from "./lib/ringTurns.js";
+import { isAuthenticated } from "./lib/auth.js";
 import AppShell from "./components/AppShell.jsx";
 import Landing from "./pages/Landing.jsx";
+import Login from "./pages/Login.jsx";
 import NotFound from "./pages/NotFound.jsx";
 import { SkeletonGrid } from "./components/ui/Feedback.jsx";
 
@@ -50,10 +52,21 @@ function RouteChangeEffects() {
   return null;
 }
 
+/** Gates the deployed demo behind the seeded login (frontend-only - see lib/auth.js). */
+function RequireAuth({ children }) {
+  const location = useLocation();
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  return children;
+}
+
 const withShell = (element) => (
-  <AppShell>
-    <Suspense fallback={<SkeletonGrid items={4} className="sm:grid-cols-2" />}>{element}</Suspense>
-  </AppShell>
+  <RequireAuth>
+    <AppShell>
+      <Suspense fallback={<SkeletonGrid items={4} className="sm:grid-cols-2" />}>{element}</Suspense>
+    </AppShell>
+  </RequireAuth>
 );
 
 export default function App() {
@@ -62,6 +75,7 @@ export default function App() {
       <RouteChangeEffects />
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
 
         <Route path="/app" element={withShell(<Dashboard />)} />
         <Route path="/app/registry" element={withShell(<Registry />)} />

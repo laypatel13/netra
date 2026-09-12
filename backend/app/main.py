@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
-from app.routers import cameras, detections, watchlist, audit, feeds
+from app.routers import auth, cameras, detections, watchlist, audit, feeds
 
 # Dev convenience only - swap for Alembic migrations before anything resembling production.
 Base.metadata.create_all(bind=engine)
@@ -35,6 +35,10 @@ OPENAPI_TAGS = [
     {
         "name": "audit",
         "description": "Audit trail for registry actions. Demonstrates the RBAC/auditability bonus consideration. Admin-only read access.",
+    },
+    {
+        "name": "auth",
+        "description": "Demo login for the deployed frontend. Gates the frontend's own routes; does not protect the API.",
     },
 ]
 
@@ -70,6 +74,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(cameras.router)
 app.include_router(feeds.router)
 app.include_router(detections.router)

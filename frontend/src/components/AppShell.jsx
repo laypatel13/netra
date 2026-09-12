@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3,
   ExternalLink,
   LayoutDashboard,
+  LogOut,
   Map as MapIcon,
   Menu,
   ShieldAlert,
@@ -13,6 +14,7 @@ import {
 import NetraLogo from "./NetraLogo.jsx";
 import ThemeToggle from "./ui/ThemeToggle.jsx";
 import { api } from "../lib/api.js";
+import { logout } from "../lib/auth.js";
 
 const NAV = [
   { to: "/app", end: true, label: "Control room", icon: LayoutDashboard, model: null },
@@ -114,10 +116,16 @@ export default function AppShell({ children }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const alertCount = useAlertCount();
   const location = useLocation();
+  const navigate = useNavigate();
   const closeBtnRef = useRef(null);
   const mainRef = useRef(null);
 
   const close = useCallback(() => setDrawerOpen(false), []);
+
+  const handleLogout = useCallback(() => {
+    logout();
+    navigate("/login", { replace: true });
+  }, [navigate]);
 
   // Close the drawer on navigation, and on Escape (every overlay needs an
   // escape route).
@@ -228,6 +236,14 @@ export default function AppShell({ children }) {
 
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-line text-ink-2 hover:bg-surface-2 hover:text-ink"
+            >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Log out</span>
+            </button>
           </div>
         </header>
 

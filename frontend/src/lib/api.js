@@ -15,10 +15,15 @@ export class ApiError extends Error {
   }
 }
 
+// In dev this stays "/api" and rides the Vite proxy (vite.config.js). In a
+// production static build there's no proxy, so VITE_API_BASE_URL must point
+// straight at the deployed backend's public URL.
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
 export async function api(path, options = {}) {
   let res;
   try {
-    res = await fetch(`/api${path}`, options);
+    res = await fetch(`${API_BASE}${path}`, options);
   } catch {
     throw new ApiError("Could not reach the backend - is it running?", { offline: true });
   }
@@ -41,4 +46,4 @@ export async function api(path, options = {}) {
 
 /** Resolve a backend-relative asset path (thumbnails, HLS playlists) to the proxy. */
 export const asset = (path) =>
-  !path ? null : path.startsWith("/") ? `/api${path}` : path;
+  !path ? null : path.startsWith("/") ? `${API_BASE}${path}` : path;
