@@ -7,7 +7,7 @@ import Badge from "../components/ui/Badge.jsx";
 import Field, { Input, Select } from "../components/ui/Field.jsx";
 import { EmptyState, ErrorState, SkeletonGrid } from "../components/ui/Feedback.jsx";
 import HlsPlayer from "../components/HlsPlayer.jsx";
-import { api } from "../lib/api.js";
+import { api, asset } from "../lib/api.js";
 import { count } from "../lib/format.js";
 
 const DEFAULT_ENABLED = 8;
@@ -208,7 +208,7 @@ export default function LiveViewer() {
           {active.map((cam, i) => (
             <div key={cam.camera_id}>
               <HlsPlayer
-                src={cam.streams?.hls?.startsWith("/") ? `/api${cam.streams.hls}` : cam.streams?.hls}
+                src={asset(cam.streams?.hls)}
                 mp4Src={cam.streams?.mp4}
                 cameraId={`${cam.name || cam.camera_id} (${cam.source_host})`}
                 reconnect={reconnectConfig}

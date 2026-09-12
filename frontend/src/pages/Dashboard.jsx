@@ -18,7 +18,7 @@ import HlsPlayer from "../components/HlsPlayer.jsx";
 import VehicleQueryForm from "../components/VehicleQueryForm.jsx";
 import StopList from "../components/StopList.jsx";
 import AlertRow from "../components/AlertRow.jsx";
-import { api } from "../lib/api.js";
+import { api, asset } from "../lib/api.js";
 import { count, pct } from "../lib/format.js";
 
 const PREVIEW_TILE_COUNT = 4;
@@ -271,7 +271,7 @@ export default function Dashboard() {
           {previewCameras.map((cam, i) => (
             <HlsPlayer
               key={cam.camera_id}
-              src={cam.streams?.hls?.startsWith("/") ? `/api${cam.streams.hls}` : cam.streams?.hls}
+              src={asset(cam.streams?.hls)}
               mp4Src={cam.streams?.mp4}
               cameraId={cam.name || cam.camera_id}
               reconnect={reconnectConfig}
