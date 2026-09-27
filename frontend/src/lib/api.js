@@ -45,5 +45,8 @@ export async function api(path, options = {}) {
 }
 
 /** Resolve a backend-relative asset path (thumbnails, HLS playlists) to the proxy. */
-export const asset = (path) =>
-  !path ? null : path.startsWith("/") ? `${API_BASE}${path}` : path;
+export const asset = (path) => {
+  if (!path) return null;
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${cleanPath}`;
+};

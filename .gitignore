@@ -11,9 +11,41 @@ venv/
 # Runtime-generated detection thumbnails (see backend/app/routers/detections.py)
 backend/data/thumbnails/
 
+# Runtime-generated evidence images
+backend/data/evidence/
+
 # Node
 node_modules/
 dist/
 
+# Logs
+*.log
+pipeline.log
+pipeline2.log
+out.txt
+test_out.txt
+test_out2.txt
+debug_output.txt
+
+# Database (local dev only)
+*.db
+
 # OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Scratch / debug scripts at root (not part of the codebase)
+fix_db*.py
+debug_test*.py
+cookie.txt
+test_basic.json
+
+# Claude / Gemini AI state
+.claude/
+.gemini/

@@ -1,6 +1,6 @@
 """Pydantic schemas - request/response shapes for the API layer."""
 from datetime import datetime
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -145,3 +145,91 @@ class AuditLogRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---- Investigation Targets ----
+
+class InvestigationTargetCreate(BaseModel):
+    plate_number: Optional[str] = None
+    vehicle_type: Optional[VehicleTypeLiteral] = None
+    vehicle_color: Optional[str] = None
+    type_required: bool = False
+    color_required: bool = False
+    make: Optional[str] = "unknown"
+    description: Optional[str] = None
+    category: Literal["stolen", "suspect", "blacklisted", "investigation"] = "investigation"
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+
+    @model_validator(mode="after")
+    def _require_some_identifying_info(self):
+        has_plate = bool(self.plate_number)
+        has_type = bool(self.vehicle_type)
+        has_color = bool(self.vehicle_color)
+        if not has_plate and not has_type and not has_color:
+            raise ValueError("Target needs at least one of: plate_number, vehicle_type, vehicle_color")
+        return self
+
+
+class InvestigationTargetRead(BaseModel):
+    id: UUID
+    plate_number: Optional[str]
+    vehicle_type: Optional[str]
+    vehicle_color: Optional[str]
+    type_required: bool
+    color_required: bool
+    make: Optional[str]
+    description: Optional[str]
+    category: str
+    priority: str
+    status: str
+    created_at: datetime
+    resolved_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class EvidenceRead(BaseModel):
+    id: UUID
+    frame_index: int
+    quality_score: float
+    raw_path: str
+    enhanced_path: Optional[str]
+    ocr_candidate: Optional[str]
+    ocr_confidence: Optional[float]
+    vehicle_type: Optional[str]
+    vehicle_color: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CandidateRead(BaseModel):
+    id: UUID
+    camera_id: str
+    track_id: int
+    target_id: Optional[UUID]
+    started_at: datetime
+    ended_at: Optional[datetime]
+    final_score: Optional[float]
+    tier: Optional[str]
+    score_breakdown: Optional[Dict[str, Any]]
+    ocr_consensus: Optional[Dict[str, Any]]
+    evidence_completeness: Optional[float] = None
+    status: str
+    verified_by: Optional[str]
+    verified_at: Optional[datetime]
+    review_note: Optional[str] = None
+    
+    # Nested evidence available when requesting detailed candidate
+    evidence: Optional[List[EvidenceRead]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class VerificationAction(BaseModel):
+    action: Literal["verify", "reject"]
+    verifier: str
+    review_note: Optional[str] = None

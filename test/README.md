@@ -40,7 +40,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8010   # pick any free port; 8000 collides with other local projects on some machines
 ```
-Tables are created automatically on first boot (`Base.metadata.create_all()` in `main.py`). There's no Alembic in this project - if you change `models.py`, you need to manually `DROP TABLE <changed tables> CASCADE;` against the dev DB and restart the backend so it recreates them with the new schema. This is a real, known rough edge, not an oversight.
+Tables are created automatically only on first boot (`Base.metadata.create_all()` in `main.py`). There's no Alembic in this project: if you change `models.py`, an existing database is **not** upgraded automatically. Back up any needed data, then run an explicit migration or reset/recreate the development schema before restarting the backend. This is a real, known rough edge, not an oversight.
 
 **Frontend:**
 ```bash
@@ -103,3 +103,32 @@ Run this after the automated check passes, to confirm the actual user-facing exp
 The old top-level URLs (`/registry`, `/live`, `/gap-analysis`, `/watchlist`) still work - they redirect to their `/app/...` equivalents.
 
 If any of these don't match what's described, that's a real regression worth flagging - not expected behavior.
+
+## 7. Investigation Pipeline (Phase 2)
+
+The investigation system is a complete multi-camera vehicle tracking workstation.
+
+### Quick start
+
+1. Start the backend: cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+2. Start the frontend: cd frontend && npm run dev
+3. Start the pipeline: cd anpr && python pipeline.py --investigation (live CCTV)
+   Or for video testing: python pipeline.py --video sample.mp4 --investigation
+
+### UI walkthrough
+
+1. Investigation page (/app/investigation) - the main workstation
+2. Create a target - fill in plate number, vehicle type, or color. Hit Create.
+3. Watch candidates arrive - pipeline syncs targets every 10s, sends evidence as vehicles are detected.
+4. Click a candidate - see evidence frames, OCR results, quality scores, score breakdown.
+5. Verify or reject - green checkmark or red X on a candidate.
+6. Pause/Resume - pause button next to a target to temporarily stop tracking.
+7. Delete - X button to delete target and optionally clear evidence.
+
+### Test suites
+
+    cd test
+    python -m pytest test_investigation.py test_investigation_state.py test_cross_camera.py test_route_engine.py test_prediction.py -v
+
+    cd anpr
+    python -m pytest test_evidence_engine.py test_pipeline.py test_vision_semantics.py -v

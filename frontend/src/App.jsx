@@ -18,6 +18,8 @@ const Registry = lazy(() => import("./pages/Registry.jsx"));
 const LiveViewer = lazy(() => import("./pages/LiveViewer.jsx"));
 const GapAnalysis = lazy(() => import("./pages/GapAnalysis.jsx"));
 const Watchlist = lazy(() => import("./pages/Watchlist.jsx"));
+const Investigation = lazy(() => import("./pages/Investigation.jsx"));
+const DatasetHealth = lazy(() => import("./pages/DatasetHealth.jsx"));
 
 /** Internal type-specimen tool - deliberately not in the product navigation. */
 const TypeSpecimen = lazy(() => import("./pages/TypeSpecimen.jsx"));
@@ -82,6 +84,8 @@ export default function App() {
         <Route path="/app/live" element={withShell(<LiveViewer />)} />
         <Route path="/app/gap-analysis" element={withShell(<GapAnalysis />)} />
         <Route path="/app/watchlist" element={withShell(<Watchlist />)} />
+        <Route path="/app/investigation" element={withShell(<Investigation />)} />
+        <Route path="/app/dataset-health" element={withShell(<DatasetHealth />)} />
 
         <Route
           path="/type"

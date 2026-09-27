@@ -1,0 +1,505 @@
+"""
+Incremental Investigation State Engine
+Phase 6 implementation.
+"""
+import uuid
+import sys
+import os
+import hashlib
+from datetime import datetime, timedelta
+from typing import List, Optional
+
+from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, desc
+
+from app.models import (
+    VehicleObservation, 
+    CrossCameraLinkCandidate, 
+    CameraGraphEdge,
+    RouteChain,
+    RouteChainObservation,
+    RouteChainLink,
+    RouteChainStatus,
+    InvestigationTarget,
+    InvestigationState,
+    VerificationAction,
+    EvidenceReview,
+    EvidenceReviewAction,
+    EvidenceReviewEntityType,
+    VehicleTrack,
+    InvestigationEvent,
+    InvestigationEventType,
+    EventProcessingStatus,
+    CameraTransitionRecord,
+    TransitionEligibility
+)
+
+from app.prediction_service import record_transition
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'anpr'))
+try:
+    from linking import compare_observations, LinkResult
+except ImportError:
+    # fallback if linking isn't found during tests
+    def compare_observations(*args, **kwargs):
+        pass
+
+MAX_CHAIN_DEPTH = 10
+MAX_BRANCH_FACTOR = 5
+MAX_HYPOTHESES_PER_OBSERVATION = 10
+MAX_TIME_WINDOW_HOURS = 2
+
+def compute_fingerprint(target_id: str, obs_ids: List[str], link_ids: List[str], is_simulated: int, graph_version: int) -> str:
+    """Deterministic route fingerprint based on observations and links."""
+    data = f"{target_id}:{','.join(obs_ids)}:{','.join(link_ids)}:{is_simulated}:{graph_version}"
+    return hashlib.sha256(data.encode()).hexdigest()
+
+
+def process_new_observation(db: Session, observation_id: str):
+    """
+    Incremental update: when a new observation is added.
+    Uses InvestigationEvent for idempotency.
+    """
+    # 1. Idempotency Check
+    existing_event = db.query(InvestigationEvent).filter_by(
+        event_type=InvestigationEventType.NEW_OBSERVATION,
+        entity_id=observation_id,
+        status=EventProcessingStatus.PROCESSED
+    ).first()
+    
+    if existing_event:
+        return
+        
+    obs = db.query(VehicleObservation).filter_by(id=observation_id).first()
+    if not obs:
+        return
+
+    # Create event
+    event = InvestigationEvent(
+        event_type=InvestigationEventType.NEW_OBSERVATION,
+        entity_id=observation_id,
+        status=EventProcessingStatus.PROCESSED,
+        processed_at=datetime.utcnow()
+    )
+    db.add(event)
+    db.flush()
+
+    # Find relevant targets (via tracks)
+    track = db.query(VehicleTrack).filter_by(camera_id=obs.camera_id, track_id=obs.track_id).first()
+    if not track or not track.target_id:
+        return
+        
+    target_id = track.target_id
+    
+    # 1. Update state
+    state = db.query(InvestigationState).filter_by(target_id=target_id).first()
+    if not state:
+        state = InvestigationState(target_id=target_id, is_simulated=obs.is_simulated)
+        db.add(state)
+        db.flush()
+        
+    state.last_processed_at = datetime.utcnow()
+    state.state_version += 1
+    
+    # 2. Find temporally relevant adjacent observations
+    time_window_start = obs.observed_at - timedelta(hours=MAX_TIME_WINDOW_HOURS)
+    time_window_end = obs.observed_at + timedelta(hours=MAX_TIME_WINDOW_HOURS)
+    
+    # We only look for observations of the same target and same mode
+    related_tracks = db.query(VehicleTrack).filter_by(target_id=target_id).all()
+    track_filter = [(t.camera_id, t.track_id) for t in related_tracks]
+    
+    if not track_filter:
+        return
+        
+    # Get all observations for this target in window
+    conditions = [
+        and_(VehicleObservation.camera_id == c_id, VehicleObservation.track_id == t_id)
+        for c_id, t_id in track_filter
+    ]
+    
+    recent_obs = db.query(VehicleObservation).filter(
+        or_(*conditions),
+        VehicleObservation.observed_at >= time_window_start,
+        VehicleObservation.observed_at <= time_window_end,
+        VehicleObservation.observed_at <= time_window_end,
+        VehicleObservation.is_simulated == obs.is_simulated,
+        or_(
+            VehicleObservation.verification_action == None,
+            VehicleObservation.verification_action != VerificationAction.REJECTED
+        )
+    ).all()
+    
+    # 3. Generate links using linking.py
+    new_links = []
+    edges = db.query(CameraGraphEdge).filter(
+        CameraGraphEdge.is_simulated == obs.is_simulated
+    ).all()
+    
+    edge_map = {(e.source_camera_id, e.destination_camera_id): e for e in edges}
+    
+    for other_obs in recent_obs:
+        if other_obs.id == obs.id:
+            continue
+            
+        # Check if obs -> other_obs exists
+        if obs.observed_at < other_obs.observed_at:
+            edge = edge_map.get((obs.camera_id, other_obs.camera_id))
+            if not edge:
+                edge = db.query(CameraGraphEdge).filter_by(
+                    source_camera_id=obs.camera_id, 
+                    destination_camera_id=other_obs.camera_id
+                ).first()
+            if edge:
+                existing_link = db.query(CrossCameraLinkCandidate).filter_by(
+                    source_observation_id=obs.id,
+                    destination_observation_id=other_obs.id
+                ).first()
+                if not existing_link:
+                    res = compare_observations(obs, other_obs, edge)
+                    if res and res.status != "rejected" and res.temporal_feasibility != "impossible":
+                        link = CrossCameraLinkCandidate(
+                            source_observation_id=obs.id,
+                            destination_observation_id=other_obs.id,
+                            camera_edge_id=edge.id,
+                            temporal_feasibility=res.temporal_feasibility,
+                            attribute_comparisons=res.attribute_comparisons,
+                            evidence_completeness=res.evidence_completeness,
+                            link_score=res.link_score,
+                            status=res.status,
+                            is_simulated=obs.is_simulated
+                        )
+                        db.add(link)
+                        db.flush() # flush to get link.id
+                        record_transition(db, link, obs, other_obs, state.graph_version)
+                        new_links.append(link)
+                    
+        # Check if other_obs -> obs exists
+        elif other_obs.observed_at < obs.observed_at:
+            edge = edge_map.get((other_obs.camera_id, obs.camera_id))
+            if not edge:
+                edge = db.query(CameraGraphEdge).filter_by(
+                    source_camera_id=other_obs.camera_id, 
+                    destination_camera_id=obs.camera_id
+                ).first()
+            if edge:
+                existing_link = db.query(CrossCameraLinkCandidate).filter_by(
+                    source_observation_id=other_obs.id,
+                    destination_observation_id=obs.id
+                ).first()
+                if not existing_link:
+                    res = compare_observations(other_obs, obs, edge)
+                    if res and res.status != "rejected" and res.temporal_feasibility != "impossible":
+                        link = CrossCameraLinkCandidate(
+                            source_observation_id=other_obs.id,
+                            destination_observation_id=obs.id,
+                            camera_edge_id=edge.id,
+                            temporal_feasibility=res.temporal_feasibility,
+                            attribute_comparisons=res.attribute_comparisons,
+                            evidence_completeness=res.evidence_completeness,
+                            link_score=res.link_score,
+                            status=res.status,
+                            is_simulated=obs.is_simulated
+                        )
+                        db.add(link)
+                        db.flush()
+                        record_transition(db, link, other_obs, obs, state.graph_version)
+                        new_links.append(link)
+                    
+    db.flush()
+    
+    # 4. Extend RouteChains incrementally
+    # If the observation has no links, it might be a new isolated chain
+    if not new_links:
+        fingerprint = compute_fingerprint(str(target_id), [str(obs.id)], [], obs.is_simulated, state.graph_version)
+        existing_chain = db.query(RouteChain).filter_by(route_fingerprint=fingerprint).first()
+        if not existing_chain:
+            chain = RouteChain(
+                target_id=target_id,
+                route_fingerprint=fingerprint,
+                graph_version=state.graph_version,
+                is_simulated=obs.is_simulated,
+                status=RouteChainStatus.ACTIVE,
+                evidence_completeness=obs.evidence_completeness
+            )
+            db.add(chain)
+            db.flush()
+            db.add(RouteChainObservation(route_chain_id=chain.id, observation_id=obs.id, sequence_order=1))
+    
+    for link in new_links:
+        # Find chains ending at link.source (for extending forward)
+        if link.source_observation_id != obs.id:
+            chains_to_extend = db.query(RouteChain).join(RouteChainObservation).filter(
+                RouteChain.target_id == target_id,
+                RouteChain.is_superseded == 0,
+                RouteChainObservation.observation_id == link.source_observation_id
+            ).all()
+            
+            for base_chain in chains_to_extend:
+                _extend_chain(db, base_chain, link, link.destination_observation_id, state.graph_version)
+                
+        # Find chains starting at link.destination (for extending backward)
+        if link.destination_observation_id != obs.id:
+            chains_to_extend = db.query(RouteChain).join(RouteChainObservation).filter(
+                RouteChain.target_id == target_id,
+                RouteChain.is_superseded == 0,
+                RouteChainObservation.observation_id == link.destination_observation_id
+            ).all()
+            
+            for base_chain in chains_to_extend:
+                _extend_chain_backward(db, base_chain, link, link.source_observation_id, state.graph_version)
+                
+    db.flush()
+    
+    # Update LAST OBSERVED
+    _update_last_observed(db, target_id)
+    db.commit()
+
+
+def _extend_chain(db: Session, base_chain: RouteChain, new_link: CrossCameraLinkCandidate, new_obs_id: str, graph_version: int):
+    # Fetch existing obs and links
+    obs_seq = db.query(RouteChainObservation).filter_by(route_chain_id=base_chain.id).order_by(RouteChainObservation.sequence_order).all()
+    link_seq = db.query(RouteChainLink).filter_by(route_chain_id=base_chain.id).order_by(RouteChainLink.sequence_order).all()
+    
+    obs_ids = [str(o.observation_id) for o in obs_seq]
+    link_ids = [str(l.link_candidate_id) for l in link_seq]
+    
+    if new_obs_id in obs_ids:
+        return # cycle prevention
+        
+    obs_ids.append(str(new_obs_id))
+    link_ids.append(str(new_link.id))
+    
+    fingerprint = compute_fingerprint(str(base_chain.target_id), obs_ids, link_ids, base_chain.is_simulated, graph_version)
+    
+    # Deduplication
+    if db.query(RouteChain).filter_by(route_fingerprint=fingerprint).first():
+        return
+        
+    new_chain = RouteChain(
+        target_id=base_chain.target_id,
+        route_fingerprint=fingerprint,
+        graph_version=graph_version,
+        is_simulated=base_chain.is_simulated,
+        status=RouteChainStatus.EXTENDED
+    )
+    db.add(new_chain)
+    db.flush()
+    
+    # clone
+    for o in obs_seq:
+        db.add(RouteChainObservation(route_chain_id=new_chain.id, observation_id=o.observation_id, sequence_order=o.sequence_order))
+    db.add(RouteChainObservation(route_chain_id=new_chain.id, observation_id=new_obs_id, sequence_order=len(obs_seq) + 1))
+    
+    for l in link_seq:
+        db.add(RouteChainLink(route_chain_id=new_chain.id, link_candidate_id=l.link_candidate_id, sequence_order=l.sequence_order))
+    db.add(RouteChainLink(route_chain_id=new_chain.id, link_candidate_id=new_link.id, sequence_order=len(link_seq) + 1))
+    
+    # Mark old chain as superseded (hypothesis dominance)
+    base_chain.is_superseded = 1
+    base_chain.status = RouteChainStatus.SUPERSEDED
+
+
+def _extend_chain_backward(db: Session, base_chain: RouteChain, new_link: CrossCameraLinkCandidate, new_obs_id: str, graph_version: int):
+    # Similar to _extend_chain, but we insert at the beginning
+    obs_seq = db.query(RouteChainObservation).filter_by(route_chain_id=base_chain.id).order_by(RouteChainObservation.sequence_order).all()
+    link_seq = db.query(RouteChainLink).filter_by(route_chain_id=base_chain.id).order_by(RouteChainLink.sequence_order).all()
+    
+    obs_ids = [str(new_obs_id)] + [str(o.observation_id) for o in obs_seq]
+    link_ids = [str(new_link.id)] + [str(l.link_candidate_id) for l in link_seq]
+    
+    fingerprint = compute_fingerprint(str(base_chain.target_id), obs_ids, link_ids, base_chain.is_simulated, graph_version)
+    
+    if db.query(RouteChain).filter_by(route_fingerprint=fingerprint).first():
+        return
+        
+    new_chain = RouteChain(
+        target_id=base_chain.target_id,
+        route_fingerprint=fingerprint,
+        graph_version=graph_version,
+        is_simulated=base_chain.is_simulated,
+        status=RouteChainStatus.EXTENDED
+    )
+    db.add(new_chain)
+    db.flush()
+    
+    db.add(RouteChainObservation(route_chain_id=new_chain.id, observation_id=new_obs_id, sequence_order=1))
+    for o in obs_seq:
+        db.add(RouteChainObservation(route_chain_id=new_chain.id, observation_id=o.observation_id, sequence_order=o.sequence_order + 1))
+        
+    db.add(RouteChainLink(route_chain_id=new_chain.id, link_candidate_id=new_link.id, sequence_order=1))
+    for l in link_seq:
+        db.add(RouteChainLink(route_chain_id=new_chain.id, link_candidate_id=l.link_candidate_id, sequence_order=l.sequence_order + 1))
+        
+    base_chain.is_superseded = 1
+    base_chain.status = RouteChainStatus.SUPERSEDED
+
+
+def process_verification_event(
+    db: Session, 
+    entity_type: EvidenceReviewEntityType, 
+    entity_id: str, 
+    action: EvidenceReviewAction, 
+    reviewer: str, 
+    review_note: str = None
+):
+    """
+    Handles human review events and propagates invalidation cascades.
+    Uses InvestigationEvent for idempotency.
+    """
+    event_id = uuid.uuid4() # Mocking an entity_id for the review
+    
+    review = EvidenceReview(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action=action,
+        reviewer=reviewer,
+        review_note=review_note
+    )
+    db.add(review)
+    db.flush()
+    
+    event = InvestigationEvent(
+        event_type=InvestigationEventType.VERIFICATION,
+        entity_id=review.id,
+        status=EventProcessingStatus.PROCESSED,
+        processed_at=datetime.utcnow()
+    )
+    db.add(event)
+    
+    target_ids_to_update = set()
+    
+    if entity_type == EvidenceReviewEntityType.VEHICLE_OBSERVATION:
+        obs = db.query(VehicleObservation).filter_by(id=entity_id).first()
+        if not obs: return
+        
+        # map action
+        mapped_action = VerificationAction.PENDING
+        if action == EvidenceReviewAction.VERIFY:
+            mapped_action = VerificationAction.VERIFIED
+        elif action == EvidenceReviewAction.REJECT:
+            mapped_action = VerificationAction.REJECTED
+            
+        # update obs
+        obs.verification_action = mapped_action
+        
+        # Cascade invalidation to links
+        if action == EvidenceReviewAction.REJECT:
+            links = db.query(CrossCameraLinkCandidate).filter(
+                or_(
+                    CrossCameraLinkCandidate.source_observation_id == obs.id,
+                    CrossCameraLinkCandidate.destination_observation_id == obs.id
+                )
+            ).all()
+            
+            for l in links:
+                l.status = "rejected"
+                _invalidate_dependent_chains(db, l.id, target_ids_to_update)
+                _invalidate_dependent_transitions(db, l.source_observation_id, l.destination_observation_id)
+                
+        # Cascade to chains directly using this observation
+        chains = db.query(RouteChain).join(RouteChainObservation).filter(
+            RouteChainObservation.observation_id == obs.id
+        ).all()
+        
+        for c in chains:
+            if action == EvidenceReviewAction.REJECT:
+                c.status = RouteChainStatus.INVALIDATED
+                c.is_superseded = 1
+            target_ids_to_update.add(c.target_id)
+            
+    elif entity_type == EvidenceReviewEntityType.CROSS_CAMERA_LINK:
+        link = db.query(CrossCameraLinkCandidate).filter_by(id=entity_id).first()
+        if not link: return
+        
+        mapped_action = VerificationAction.PENDING
+        if action == EvidenceReviewAction.VERIFY:
+            mapped_action = VerificationAction.VERIFIED
+        elif action == EvidenceReviewAction.REJECT:
+            mapped_action = VerificationAction.REJECTED
+            
+        link.verification_action = mapped_action
+        if action == EvidenceReviewAction.REJECT:
+            link.status = "rejected"
+            _invalidate_dependent_chains(db, link.id, target_ids_to_update)
+            _invalidate_dependent_transitions(db, link.source_observation_id, link.destination_observation_id)
+            
+    elif entity_type == EvidenceReviewEntityType.ROUTE_CHAIN:
+        chain = db.query(RouteChain).filter_by(id=entity_id).first()
+        if not chain: return
+        
+        mapped_action = VerificationAction.PENDING
+        if action == EvidenceReviewAction.ACCEPT:
+            mapped_action = VerificationAction.VERIFIED
+        elif action == EvidenceReviewAction.REJECT:
+            mapped_action = VerificationAction.REJECTED
+            
+        chain.verification_action = mapped_action
+        target_ids_to_update.add(chain.target_id)
+        
+    db.flush()
+    
+    # Recompute state and last seen for affected targets
+    for target_id in target_ids_to_update:
+        state = db.query(InvestigationState).filter_by(target_id=target_id).first()
+        if state:
+            state.state_version += 1
+            state.last_processed_at = datetime.utcnow()
+        _update_last_observed(db, target_id)
+        
+    db.commit()
+
+
+def _invalidate_dependent_chains(db: Session, link_id: str, target_ids_to_update: set):
+    chains = db.query(RouteChain).join(RouteChainLink).filter(
+        RouteChainLink.link_candidate_id == link_id
+    ).all()
+    
+    for c in chains:
+        c.status = RouteChainStatus.INVALIDATED
+        c.is_superseded = 1
+        target_ids_to_update.add(c.target_id)
+
+def _invalidate_dependent_transitions(db: Session, source_obs_id: str, dest_obs_id: str):
+    transitions = db.query(CameraTransitionRecord).filter_by(
+        source_observation_id=source_obs_id,
+        destination_observation_id=dest_obs_id
+    ).all()
+    for t in transitions:
+        t.transition_status = TransitionEligibility.INELIGIBLE
+        t.exclusion_reason = "rejected_link_or_observation"
+
+
+def _update_last_observed(db: Session, target_id: str):
+    state = db.query(InvestigationState).filter_by(target_id=target_id).first()
+    if not state: return
+    
+    related_tracks = db.query(VehicleTrack).filter_by(target_id=target_id).all()
+    track_filter = [(t.camera_id, t.track_id) for t in related_tracks]
+    
+    if not track_filter:
+        state.last_seen_observation_id = None
+        state.last_observation_at = None
+        return
+        
+    conditions = [
+        and_(VehicleObservation.camera_id == c_id, VehicleObservation.track_id == t_id)
+        for c_id, t_id in track_filter
+    ]
+    
+    latest_obs = db.query(VehicleObservation).filter(
+        or_(*conditions),
+        or_(
+            VehicleObservation.verification_action == None,
+            VehicleObservation.verification_action != VerificationAction.REJECTED
+        )
+    ).order_by(desc(VehicleObservation.observed_at)).first()
+    
+    if latest_obs:
+        state.last_seen_observation_id = latest_obs.id
+        state.last_observation_at = latest_obs.observed_at
+        state.last_seen_at = latest_obs.observed_at
+        state.last_seen_camera_id = latest_obs.camera_id
+    else:
+        state.last_seen_observation_id = None
+        state.last_observation_at = None

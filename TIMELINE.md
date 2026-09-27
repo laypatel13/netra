@@ -113,3 +113,70 @@ Ran the actual rehearsal using the new `test/` toolkit (`test/smoke_test.sh` + `
 7. Submission completeness
 
 See `PLAN.md` for full technical detail, endpoints, schemas, current status, and things not to do.
+
+
+---
+
+## Phase 2 (Sep 15-22) - Investigation Pipeline + Production Demo
+
+**We were shortlisted after Phase 1.** Phase 2 is a live demo on Sep 22-23 against production-scale camera feeds.
+
+### What was built for Phase 2
+
+- **Multi-camera investigation pipeline** (npr/multi_camera.py, npr/investigation_pipeline.py)
+  - Shared inference queue architecture across all cameras
+  - Per-camera worker threads with connection state machine + exponential backoff
+  - Evidence buffering per tracked vehicle (TrackBuffer + Observation model)
+  - Quality-ranked best-frame selection with temporal diversity
+  - Multi-frame OCR consensus engine
+  - Evidence fusion scoring with match tier classification
+  - 3-valued target filtering logic (type, color, plate matching)
+  - MOG2 motion-gated frame skipping
+
+- **Backend investigation engine** (ackend/app/routers/investigations.py + services)
+  - 20+ API routes for targets, candidates, observations, timeline, route history, predictions
+  - Cross-camera route chain construction with graph-versioned temporal feasibility
+  - Transition recording for ML prediction readiness
+  - Pipeline heartbeat monitoring with per-camera health tracking
+  - Cascading target deletion with safe foreign-key handling
+  - Investigation purge endpoint
+
+- **Investigation workstation UI** (rontend/src/pages/Investigation.jsx)
+  - Create/pause/resume/delete investigation targets
+  - Real-time candidate feed (5s polling)
+  - Evidence frame viewer with quality scores and OCR results
+  - Score breakdown visualization per candidate
+  - Timeline and route history panels
+  - Predictive analysis panel
+  - Candidate verification (approve/reject with notes)
+
+- **16 new database models** in ackend/app/models.py:
+  InvestigationTarget, VehicleTrack, TrackEvidence, VehicleObservation,
+  RecordingSession, CameraGraphEdge, CrossCameraLinkCandidate, RouteChain,
+  RouteChainObservation, RouteChainLink, InvestigationState, EvidenceReview,
+  GraphVersion, PipelineHeartbeat, InvestigationEvent, CameraTransitionRecord
+
+### Bugs fixed during Phase 2
+
+- **Heartbeat 500 error**: Pipeline heartbeat route referenced a stats column that did not exist on the PipelineHeartbeat model. Removed the phantom field reference.
+- **Target deletion 500 error**: Deleting an investigation target with evidence tried to hard-delete VehicleObservation records, violating foreign-key constraints from cross-camera links. Fixed to unlink (set candidate_id=NULL) instead of delete.
+- **Missing purge endpoint**: Frontend Clear Data button called /investigations/purge which did not exist. Implemented the full cascading purge route.
+- **Pipeline not detecting**: Backend going down caused the pipeline to lose its target list. Target sync now gracefully handles backend unavailability and retries.
+
+### How to run everything (Phase 2)
+
+Terminal 1 - Backend:
+    cd backend
+    python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+Terminal 2 - Frontend:
+    cd frontend
+    npm run dev
+
+Terminal 3 - Pipeline (live CCTV investigation mode):
+    cd anpr
+    python pipeline.py --investigation
+
+Terminal 3 alt - Pipeline (video testing):
+    cd anpr
+    python pipeline.py --video sample.mp4 --investigation
