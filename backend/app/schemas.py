@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, model_validator
 
-VehicleTypeLiteral = Literal["car", "motorcycle", "bus", "truck"]
+VehicleTypeLiteral = Literal["car", "motorcycle", "bus", "truck", "auto"]
 
 
 # ---- Camera (Model 1 registry) ----
@@ -96,6 +96,26 @@ class WatchlistCreate(BaseModel):
     vehicle_color: Optional[str] = None
     category: Literal["stolen", "suspect", "blacklisted"]
     source: Optional[str] = "representative-dataset"
+
+    @model_validator(mode="after")
+    def _require_plate_or_attributes(self):
+        has_plate = bool(self.plate_number)
+        has_attributes = bool(self.vehicle_type) and bool(self.vehicle_color)
+        if not has_plate and not has_attributes:
+            raise ValueError("watchlist entry needs plate_number OR both vehicle_type and vehicle_color")
+        return self
+
+
+class WatchlistUpdate(BaseModel):
+    """
+    Full replace of the identifying fields (PUT, not PATCH) - editing an
+    entry always means retyping plate-or-attributes plus category, same
+    shape and same validation as creating one.
+    """
+    plate_number: Optional[str] = None
+    vehicle_type: Optional[VehicleTypeLiteral] = None
+    vehicle_color: Optional[str] = None
+    category: Literal["stolen", "suspect", "blacklisted"]
 
     @model_validator(mode="after")
     def _require_plate_or_attributes(self):

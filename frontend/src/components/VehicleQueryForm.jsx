@@ -4,7 +4,7 @@ import Button from "./ui/Button.jsx";
 import Field, { Input, Select } from "./ui/Field.jsx";
 import Segmented from "./ui/Segmented.jsx";
 
-export const VEHICLE_TYPES = ["car", "motorcycle", "bus", "truck"];
+export const VEHICLE_TYPES = ["car", "motorcycle", "bus", "truck", "auto"];
 
 const MODES = [
   { value: "plate", label: "By plate" },

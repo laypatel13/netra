@@ -1,5 +1,6 @@
-import { AlertTriangle, BadgeCheck, Camera } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Camera, Trash2 } from "lucide-react";
 import Badge from "./ui/Badge.jsx";
+import Button from "./ui/Button.jsx";
 import { asset } from "../lib/api.js";
 import { vehicleLabel } from "../lib/format.js";
 
@@ -9,8 +10,12 @@ import { vehicleLabel } from "../lib/format.js";
  * The tier is the whole point: an exact plate read is evidence, an attribute
  * match is a lead. They are never styled alike, and the attribute tier says
  * "possible" in words rather than relying on the colour of the badge.
+ *
+ * `onDelete` is optional and left unset on the Dashboard's compact preview
+ * and the /type style-guide page - only the Watchlist page's full feed
+ * offers removing a detection.
  */
-export default function AlertRow({ alert, compact = false }) {
+export default function AlertRow({ alert, compact = false, onDelete, deleting = false, confirming = false }) {
   const exact = alert.tier === "exact_plate";
   const d = alert.detection || {};
   const subject = d.plate_number || vehicleLabel(d.vehicle_color, d.vehicle_type);
@@ -53,6 +58,20 @@ export default function AlertRow({ alert, compact = false }) {
           </p>
         )}
       </div>
+
+      {onDelete && (
+        <Button
+          variant={confirming ? "danger" : "ghost"}
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          onClick={onDelete}
+          loading={deleting}
+          aria-label={confirming ? `Confirm delete of detection for ${subject}` : `Delete detection for ${subject}`}
+          title={confirming ? "Click again to confirm" : "Delete this detection"}
+        >
+          {!deleting && <Trash2 className="h-4 w-4" aria-hidden="true" />}
+        </Button>
+      )}
     </li>
   );
 }

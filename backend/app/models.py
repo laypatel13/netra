@@ -48,11 +48,18 @@ class WatchlistCategory(str, enum.Enum):
 
 
 class VehicleType(str, enum.Enum):
-    """Matches the YOLO vehicle detector's labels (anpr/detector.py VEHICLE_CLASS_IDS)."""
+    """Matches the YOLO vehicle detector's labels (anpr/detector.py VEHICLE_CLASS_IDS).
+
+    "auto" (auto-rickshaw / three-wheeler) is not a COCO class - the detector
+    reclassifies into it heuristically from a raw "truck" hit, since COCO's
+    pretrained vehicle classes force auto-rickshaws into the closest of
+    car/motorcycle/bus/truck otherwise. See detector.py's docstring.
+    """
     car = "car"
     motorcycle = "motorcycle"
     bus = "bus"
     truck = "truck"
+    auto = "auto"
 
 
 class Camera(Base):

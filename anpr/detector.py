@@ -19,6 +19,27 @@ from ultralytics import YOLO
 # COCO class ids for the vehicle types we care about.
 VEHICLE_CLASS_IDS = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
+# Auto-rickshaws (three-wheelers) have no COCO class of their own, so the
+# pretrained model has to force them into the closest fit among the classes
+# above - and empirically that's "truck", not "car" or "motorcycle": the
+# boxy rear canopy reads as a small truck bed to a model that's never seen a
+# rickshaw. A real truck, viewed from the side/three-quarter CCTV angles
+# this footage uses, is reliably much wider than it is tall; a compact
+# auto-rickshaw's box is closer to square. That aspect ratio is a cheap,
+# honest disambiguator - not a certainty, same spirit as the vehicle_color
+# averaging in color.py, and the same fix applies: the saved thumbnail is
+# what a human actually verifies a "truck" vs. "auto" call against.
+AUTO_RICKSHAW_MAX_ASPECT_RATIO = 1.15
+
+
+def _reclassify_auto_rickshaw(label: str, x1: int, y1: int, x2: int, y2: int) -> str:
+    if label != "truck":
+        return label
+    width, height = x2 - x1, y2 - y1
+    if height <= 0:
+        return label
+    return "auto" if (width / height) <= AUTO_RICKSHAW_MAX_ASPECT_RATIO else label
+
 
 @dataclass
 class VehicleBox:
@@ -49,9 +70,10 @@ class VehicleDetector:
                 if cls_id not in VEHICLE_CLASS_IDS:
                     continue
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
+                label = _reclassify_auto_rickshaw(VEHICLE_CLASS_IDS[cls_id], x1, y1, x2, y2)
                 boxes.append(VehicleBox(
                     x1=x1, y1=y1, x2=x2, y2=y2,
-                    label=VEHICLE_CLASS_IDS[cls_id],
+                    label=label,
                     confidence=float(box.conf[0]),
                 ))
         return boxes

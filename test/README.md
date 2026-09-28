@@ -29,7 +29,7 @@ You'll need: Python 3.11+, Node, Docker (for local Postgres - skip if you have a
 **Database** (skip if using Supabase):
 ```bash
 cd backend
-docker compose up -d          # if port 5432 is already taken locally, run: DB_PORT=5433 docker compose up -d
+docker compose up -d          # publishes Postgres on host port 5433 (override with DB_PORT=...)
 ```
 
 **Backend:**

@@ -41,12 +41,13 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
+from app.dependencies import get_actor, require_admin
 from app.serializers import detection_to_read
 from app.routers.watchlist import check_detection_against_watchlist
 
 router = APIRouter(prefix="/detections", tags=["detections"])
 
-VEHICLE_TYPES = ("car", "motorcycle", "bus", "truck")
+VEHICLE_TYPES = ("car", "motorcycle", "bus", "truck", "auto")
 
 THUMBNAIL_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "thumbnails"
@@ -105,6 +106,28 @@ async def record_detection(
     check_detection_against_watchlist(plate_number, vehicle_type, vehicle_color, db)
 
     return detection_to_read(db_detection)
+
+
+@router.delete("/{detection_id}", status_code=204, summary="Remove a detection")
+def delete_detection(
+    detection_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: str = Depends(get_actor),
+    _role: str = Depends(require_admin),
+):
+    """
+    Admin only, same access level as the camera/watchlist deletes - so a
+    bad crop or a stray test detection can be cleared straight from the
+    alert feed instead of raw SQL.
+    """
+    d = db.query(models.Detection).filter_by(id=detection_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="detection not found")
+    if d.thumbnail_path and os.path.exists(d.thumbnail_path):
+        os.remove(d.thumbnail_path)
+    db.delete(d)
+    db.commit()
+    return None
 
 
 @router.get("/{detection_id}/thumbnail", summary="Fetch a detection's saved crop image")

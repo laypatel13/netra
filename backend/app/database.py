@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://netra:netra@localhost:5432/netra")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://netra:netra@localhost:5433/netra")
 
 _logger = logging.getLogger("netra.database")
 if "localhost" in DATABASE_URL or "127.0.0.1" in DATABASE_URL:

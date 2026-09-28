@@ -61,7 +61,7 @@ cp .env.example .env
 # Edit .env - paste your Supabase DATABASE_URL (or leave as-is for local Docker)
 # If using Docker fallback:  docker compose up -d
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8030
 ```
 
 **Frontend**

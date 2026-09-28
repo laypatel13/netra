@@ -46,6 +46,36 @@ def add_watchlist_entry(entry: schemas.WatchlistCreate, db: Session = Depends(ge
     return db_entry
 
 
+@router.put("/{entry_id}", response_model=schemas.WatchlistRead, summary="Edit a watchlist entry")
+def update_watchlist_entry(
+    entry_id: uuid.UUID,
+    body: schemas.WatchlistUpdate,
+    db: Session = Depends(get_db),
+    actor: str = Depends(get_actor),
+    _role: str = Depends(require_admin),
+):
+    """Admin only, same access level as delete - editing removes/replaces identifying data."""
+    entry = db.query(models.WatchlistEntry).filter_by(id=entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="watchlist entry not found")
+
+    if body.plate_number and body.plate_number != entry.plate_number:
+        clash = db.query(models.WatchlistEntry).filter(
+            models.WatchlistEntry.plate_number == body.plate_number,
+            models.WatchlistEntry.id != entry_id,
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail="plate already on watchlist")
+
+    entry.plate_number = body.plate_number
+    entry.vehicle_type = body.vehicle_type
+    entry.vehicle_color = body.vehicle_color
+    entry.category = body.category
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
 @router.delete(
     "/{entry_id}", status_code=204, summary="Remove a watchlist entry",
 )
