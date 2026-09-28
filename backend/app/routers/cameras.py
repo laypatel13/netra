@@ -7,6 +7,7 @@ invent camera IDs that don't correspond to something in the catalogue.
 """
 import csv
 import io
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import requests
@@ -374,6 +375,119 @@ def gap_analysis(db: Session = Depends(get_db)):
             "departments_onboarded": len(onboarded_depts),
             "departments_missing": len(missing),
         },
+    }
+
+
+@router.get(
+    "/health",
+    summary="Runtime health for all cameras from pipeline heartbeat",
+    response_description="Per-camera runtime connection state and processing stats. "
+                         "Reflects ACTUAL pipeline activity, not just database configuration.",
+)
+def get_cameras_health(db: Session = Depends(get_db)):
+    """
+    Returns real runtime health based on pipeline heartbeat data.
+    A camera is only ONLINE when the pipeline worker is actively receiving frames.
+    A camera with an active DB configuration but a dead pipeline process shows as OFFLINE.
+
+    Connection states:
+      - ONLINE: worker is connected and receiving frames
+      - DEGRADED: connected but experiencing frame timeouts or high drop rate
+      - RECONNECTING: lost connection, retrying with backoff
+      - OFFLINE: not connected (worker stopped, error, or pipeline not running)
+    """
+    heartbeat_timeout = timedelta(seconds=15)
+    now_utc = datetime.utcnow()
+
+    recent = (
+        db.query(models.PipelineHeartbeat)
+        .filter(models.PipelineHeartbeat.last_heartbeat >= now_utc - heartbeat_timeout)
+        .all()
+    )
+
+    pipeline_online = len(recent) > 0
+    frame_timeout_seconds = 15.0
+
+    # Aggregate per-camera health from all active pipelines
+    per_camera: dict[str, dict] = {}
+    for hb in recent:
+        if hb.per_camera_health:
+            for cam_health in hb.per_camera_health:
+                cam_id = cam_health.get("camera_id", "")
+                if not cam_id:
+                    continue
+
+                worker_alive = cam_health.get("worker_alive", False)
+                last_frame_recv = cam_health.get("last_frame_received", 0.0)
+                
+                # We need to know if the frame is fresh relative to the *heartbeat generation time*,
+                # but since timestamps might drift, we'll use the worker_alive flag and connection_state,
+                # and assume if worker_alive is False, it's definitely OFFLINE or ERROR.
+                conn_state = cam_health.get("connection_state", cam_health.get("status", "offline"))
+                
+                if not worker_alive:
+                    if conn_state == "error":
+                        api_status = "ERROR"
+                    else:
+                        api_status = "OFFLINE"
+                else:
+                    if conn_state in ("connected", "online"):
+                        # If the worker says it's connected, check frame flow if we have the timestamp
+                        # The heartbeat is generated on the worker side, so last_frame_received is 
+                        # in the same epoch as the heartbeat's generation time (we could compare to time.time()
+                        # assuming same machine or synced NTP).
+                        now_ts = now_utc.timestamp()
+                        if last_frame_recv > 0 and (now_ts - last_frame_recv) > frame_timeout_seconds:
+                            api_status = "DEGRADED"  # Connected but no frames flowing
+                            conn_state = "frozen"
+                        else:
+                            api_status = "ONLINE"
+                    elif conn_state == "degraded":
+                        api_status = "DEGRADED"
+                    elif conn_state == "reconnecting":
+                        api_status = "RECONNECTING"
+                    else:
+                        api_status = "OFFLINE"
+
+                per_camera[cam_id] = {
+                    "camera_id": cam_id,
+                    "status": api_status,
+                    "connection_state": conn_state,
+                    "frames_received": cam_health.get("frames_read", 0),
+                    "frames_processed": cam_health.get("frames_processed", 0),
+                    "frames_dropped": cam_health.get("frames_dropped", 0),
+                    "vehicles_detected": cam_health.get("vehicles_detected", 0),
+                    "reconnect_count": cam_health.get("reconnect_count", 0),
+                    "last_frame_time": last_frame_recv if last_frame_recv > 0 else cam_health.get("last_frame_time"),
+                    "current_error": cam_health.get("current_error"),
+                    "worker_alive": worker_alive,
+                }
+
+    # Include registered cameras that aren't in any active pipeline
+    all_cameras = db.query(models.Camera).all()
+    for cam in all_cameras:
+        if cam.camera_id not in per_camera:
+            per_camera[cam.camera_id] = {
+                "camera_id": cam.camera_id,
+                "status": "OFFLINE",
+                "connection_state": "disconnected",
+                "frames_received": 0,
+                "frames_processed": 0,
+                "frames_dropped": 0,
+                "vehicles_detected": 0,
+                "reconnect_count": 0,
+                "last_frame_time": None,
+                "current_error": None if pipeline_online else "Pipeline not running",
+            }
+
+    return {
+        "pipeline_online": pipeline_online,
+        "cameras": list(per_camera.values()),
+        "total": len(per_camera),
+        "online": sum(1 for c in per_camera.values() if c["status"] == "ONLINE"),
+        "degraded": sum(1 for c in per_camera.values() if c["status"] == "DEGRADED"),
+        "reconnecting": sum(1 for c in per_camera.values() if c["status"] == "RECONNECTING"),
+        "offline": sum(1 for c in per_camera.values() if c["status"] == "OFFLINE"),
     }
 
 

@@ -8,9 +8,11 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.database import Base, engine
-from app.routers import auth, cameras, detections, watchlist, audit, feeds
+from app.routers import auth, cameras, detections, watchlist, audit, feeds, investigations
+from app.routers.investigations import EVIDENCE_DIR
 
 # Dev convenience only - swap for Alembic migrations before anything resembling production.
 Base.metadata.create_all(bind=engine)
@@ -79,7 +81,12 @@ app.include_router(cameras.router)
 app.include_router(feeds.router)
 app.include_router(detections.router)
 app.include_router(watchlist.router)
+app.include_router(investigations.router)
 app.include_router(audit.router)
+
+# Investigation evidence crops, written by anpr/investigation_pipeline.py.
+EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/data/evidence", StaticFiles(directory=EVIDENCE_DIR), name="evidence")
 
 
 @app.get("/", tags=["health"])

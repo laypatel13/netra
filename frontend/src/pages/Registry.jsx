@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer } from "react-leaflet";
 import L from "leaflet";
-import { MapPinOff, Upload } from "lucide-react";
+import { MapPinOff, Upload, Plus } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import { Card, CardBody, CardHeader } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 import Badge, { StatusPill } from "../components/ui/Badge.jsx";
 import Field, { FileInput, Input, Select } from "../components/ui/Field.jsx";
+import Segmented from "../components/ui/Segmented.jsx";
 import { EmptyState, ErrorState } from "../components/ui/Feedback.jsx";
 import VehicleQueryForm from "../components/VehicleQueryForm.jsx";
 import StopList from "../components/StopList.jsx";
@@ -69,6 +70,20 @@ export default function Registry() {
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState(null);
+
+  const [onboardMode, setOnboardMode] = useState("manual");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState(null);
+  const [addResult, setAddResult] = useState(null);
+  const [newCam, setNewCam] = useState({
+    camera_id: "",
+    name: "",
+    latitude: "",
+    longitude: "",
+    department: "",
+    camera_type: "ip",
+    connectivity_status: "unknown",
+  });
 
   const [cameraCoords, setCameraCoords] = useState({});
   const [route, setRoute] = useState(null);
@@ -147,6 +162,38 @@ export default function Registry() {
       setUploadError(err);
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleAddManual(e) {
+    e.preventDefault();
+    if (!newCam.camera_id || !newCam.latitude || !newCam.longitude || !newCam.department) return;
+    setAdding(true);
+    setAddError(null);
+    setAddResult(null);
+
+    try {
+      const payload = {
+        ...newCam,
+        latitude: parseFloat(newCam.latitude),
+        longitude: parseFloat(newCam.longitude),
+      };
+      await api("/cameras", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Role": "admin", ...(actor ? { "X-Actor": actor } : {}) },
+        body: JSON.stringify(payload),
+      });
+      setAddResult(`Successfully onboarded camera ${newCam.camera_id}`);
+      setNewCam({
+        camera_id: "", name: "", latitude: "", longitude: "",
+        department: "", camera_type: "ip", connectivity_status: "unknown",
+      });
+      e.target.reset();
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setAddError(err);
+    } finally {
+      setAdding(false);
     }
   }
 
@@ -351,43 +398,117 @@ export default function Registry() {
 
           <Card>
             <CardHeader
-              title="Bulk onboarding"
-              description="Upload a CSV of cameras. Rows with a bad status, type or coordinate are skipped, not failed - the rest still import."
+              title="Onboard camera"
+              description={onboardMode === "bulk" 
+                ? "Upload a CSV of cameras. Invalid rows are skipped, the rest import." 
+                : "Add a single camera manually into the registry."}
             />
-            <CardBody>
-              <form onSubmit={handleUpload} className="flex flex-col gap-3">
-                <Field label="Camera CSV" required>
-                  {(a) => (
-                    <FileInput
-                      {...a}
-                      accept=".csv"
-                      onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
-                    />
-                  )}
-                </Field>
-                <Field label="Actor" hint="Optional - recorded in the audit trail alongside the import.">
-                  {(a) => (
-                    <Input
-                      {...a}
-                      value={actor}
-                      onChange={(e) => setActor(e.target.value)}
-                      placeholder="officer name or ID"
-                      autoComplete="off"
-                    />
-                  )}
-                </Field>
-                <Button type="submit" disabled={!csvFile} loading={uploading} className="self-start">
-                  {!uploading && <Upload className="h-4 w-4" aria-hidden="true" />}
-                  Upload
-                </Button>
+            <CardBody className="flex flex-col gap-4">
+              <Segmented
+                value={onboardMode}
+                onChange={setOnboardMode}
+                options={[
+                  { value: "manual", label: "Manual entry" },
+                  { value: "bulk", label: "Bulk CSV" }
+                ]}
+              />
 
-                {uploadResult && (
-                  <p role="status" className="rounded-xl border border-ok/30 bg-ok-soft px-3.5 py-2.5 text-[13px] font-medium text-ok">
-                    {uploadResult}
-                  </p>
-                )}
-                {uploadError && <ErrorState error={uploadError} />}
-              </form>
+              {onboardMode === "bulk" ? (
+                <form onSubmit={handleUpload} className="flex flex-col gap-3">
+                  <Field label="Camera CSV" required>
+                    {(a) => (
+                      <FileInput
+                        {...a}
+                        accept=".csv"
+                        onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+                      />
+                    )}
+                  </Field>
+                  <Field label="Actor" hint="Optional - recorded in the audit trail.">
+                    {(a) => (
+                      <Input
+                        {...a}
+                        value={actor}
+                        onChange={(e) => setActor(e.target.value)}
+                        placeholder="officer name or ID"
+                        autoComplete="off"
+                      />
+                    )}
+                  </Field>
+                  <Button type="submit" disabled={!csvFile} loading={uploading} className="self-start">
+                    {!uploading && <Upload className="h-4 w-4" aria-hidden="true" />}
+                    Upload
+                  </Button>
+
+                  {uploadResult && (
+                    <p role="status" className="rounded-xl border border-ok/30 bg-ok-soft px-3.5 py-2.5 text-[13px] font-medium text-ok">
+                      {uploadResult}
+                    </p>
+                  )}
+                  {uploadError && <ErrorState error={uploadError} />}
+                </form>
+              ) : (
+                <form onSubmit={handleAddManual} className="flex flex-col gap-3">
+                  <Field label="Camera ID" required>
+                    {(a) => (
+                      <Input {...a} value={newCam.camera_id} onChange={(e) => setNewCam({...newCam, camera_id: e.target.value})} placeholder="cam_123" />
+                    )}
+                  </Field>
+                  <Field label="Name">
+                    {(a) => (
+                      <Input {...a} value={newCam.name} onChange={(e) => setNewCam({...newCam, name: e.target.value})} placeholder="Main Gate" />
+                    )}
+                  </Field>
+                  <div className="flex gap-3">
+                    <Field label="Latitude" required className="flex-1">
+                      {(a) => (
+                        <Input {...a} type="number" step="any" value={newCam.latitude} onChange={(e) => setNewCam({...newCam, latitude: e.target.value})} placeholder="23.0" />
+                      )}
+                    </Field>
+                    <Field label="Longitude" required className="flex-1">
+                      {(a) => (
+                        <Input {...a} type="number" step="any" value={newCam.longitude} onChange={(e) => setNewCam({...newCam, longitude: e.target.value})} placeholder="72.5" />
+                      )}
+                    </Field>
+                  </div>
+                  <Field label="Department" required>
+                    {(a) => (
+                      <Input {...a} value={newCam.department} onChange={(e) => setNewCam({...newCam, department: e.target.value})} placeholder="Gujarat Police" />
+                    )}
+                  </Field>
+                  <Field label="Connectivity status">
+                    {(a) => (
+                      <Select {...a} value={newCam.connectivity_status} onChange={(e) => setNewCam({...newCam, connectivity_status: e.target.value})}>
+                        <option value="online">Online</option>
+                        <option value="offline">Offline</option>
+                        <option value="unknown">Unknown</option>
+                      </Select>
+                    )}
+                  </Field>
+                  <Field label="Actor" hint="Optional - recorded in the audit trail.">
+                    {(a) => (
+                      <Input
+                        {...a}
+                        value={actor}
+                        onChange={(e) => setActor(e.target.value)}
+                        placeholder="officer name or ID"
+                        autoComplete="off"
+                      />
+                    )}
+                  </Field>
+                  <Button type="submit" loading={adding} className="self-start">
+                    {!adding && <Plus className="h-4 w-4" aria-hidden="true" />}
+                    Add camera
+                  </Button>
+
+                  {addResult && (
+                    <p role="status" className="rounded-xl border border-ok/30 bg-ok-soft px-3.5 py-2.5 text-[13px] font-medium text-ok">
+                      {addResult}
+                    </p>
+                  )}
+                  {addError && <ErrorState error={addError} />}
+                </form>
+              )}
             </CardBody>
           </Card>
         </div>

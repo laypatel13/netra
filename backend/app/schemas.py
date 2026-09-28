@@ -1,6 +1,6 @@
 """Pydantic schemas - request/response shapes for the API layer."""
 from datetime import datetime
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -165,3 +165,193 @@ class AuditLogRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---- Investigation Targets ----
+
+class InvestigationTargetCreate(BaseModel):
+    plate_number: Optional[str] = None
+    vehicle_type: Optional[VehicleTypeLiteral] = None
+    vehicle_color: Optional[str] = None
+    type_required: bool = False
+    color_required: bool = False
+    make: Optional[str] = "unknown"
+    description: Optional[str] = None
+    category: Literal["stolen", "suspect", "blacklisted", "investigation"] = "investigation"
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+
+    @model_validator(mode="after")
+    def _require_some_identifying_info(self):
+        has_plate = bool(self.plate_number)
+        has_type = bool(self.vehicle_type)
+        has_color = bool(self.vehicle_color)
+        if not has_plate and not has_type and not has_color:
+            raise ValueError("Target needs at least one of: plate_number, vehicle_type, vehicle_color")
+        return self
+
+
+class InvestigationTargetRead(BaseModel):
+    id: UUID
+    plate_number: Optional[str]
+    vehicle_type: Optional[str]
+    vehicle_color: Optional[str]
+    type_required: bool
+    color_required: bool
+    make: Optional[str]
+    description: Optional[str]
+    category: str
+    priority: str
+    status: str
+    created_at: datetime
+    resolved_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class EvidenceRead(BaseModel):
+    id: UUID
+    frame_index: int
+    quality_score: float
+    raw_path: str
+    enhanced_path: Optional[str]
+    ocr_candidate: Optional[str]
+    ocr_confidence: Optional[float]
+    vehicle_type: Optional[str]
+    vehicle_color: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CandidateRead(BaseModel):
+    id: UUID
+    camera_id: str
+    track_id: int
+    target_id: Optional[UUID]
+    started_at: datetime
+    ended_at: Optional[datetime]
+    final_score: Optional[float]
+    tier: Optional[str]
+    score_breakdown: Optional[Dict[str, Any]]
+    ocr_consensus: Optional[Dict[str, Any]]
+    evidence_completeness: Optional[float] = None
+    status: str
+    verified_by: Optional[str]
+    verified_at: Optional[datetime]
+    review_note: Optional[str] = None
+    
+    # Nested evidence available when requesting detailed candidate
+    evidence: Optional[List[EvidenceRead]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class VerificationAction(BaseModel):
+    action: Literal["verify", "reject"]
+    verifier: str
+    review_note: Optional[str] = None
+
+
+class ReviewRequest(BaseModel):
+    """Reviewer decision on a single observation or cross-camera link."""
+    action: Literal["accept", "reject", "reopen", "flag"]
+    reviewer: str
+    review_note: Optional[str] = None
+
+
+class TargetStatusUpdate(BaseModel):
+    status: Literal["active", "paused", "resolved"]
+
+
+# ---- Investigation pipeline ingest (anpr/investigation_pipeline.py) ----
+
+class EvidenceIngest(BaseModel):
+    frame_index: int
+    quality_score: float
+    raw_path: str
+    enhanced_path: Optional[str] = None
+    ocr_candidate: Optional[str] = None
+    ocr_confidence: Optional[float] = None
+    vehicle_type: Optional[VehicleTypeLiteral] = None
+    vehicle_color: Optional[str] = None
+    timestamp: Optional[float] = None
+    source_pts: Optional[float] = None
+    evidence_state: Optional[Literal["match", "approximate", "non_match", "unknown", "conflicting"]] = None
+    unknown_reason: Optional[
+        Literal["not_visible", "not_detected", "extraction_failed", "low_confidence", "insufficient_frames", "unavailable"]
+    ] = None
+    extraction_method: Optional[str] = None
+    is_simulated: bool = False
+
+
+class CandidateIngest(BaseModel):
+    camera_id: str
+    track_id: int
+    target_id: Optional[UUID] = None
+    started_at: float
+    ended_at: float
+    final_score: float
+    tier: str
+    score_breakdown: Dict[str, Any]
+    ocr_consensus: Dict[str, Any]
+    evidence_completeness: Optional[float] = None
+    evidence: List[EvidenceIngest]
+
+
+class ObservationIngest(BaseModel):
+    camera_id: str
+    session_id: str
+    track_id: int
+    candidate_id: Optional[UUID] = None
+    status: Literal["open", "updating", "finalized"]
+    timestamp_source: Literal["source_pts", "frame_clock", "absolute_timestamp", "unknown"]
+    is_simulated: bool = False
+    observed_at: float  # unix seconds, UTC
+    source_pts_start: Optional[float] = None
+    source_pts_end: Optional[float] = None
+    vehicle_type: Optional[VehicleTypeLiteral] = None
+    color: Optional[str] = None
+    color_confidence: Optional[float] = None
+    plate: Optional[str] = None
+    plate_confidence: Optional[float] = None
+    evidence_completeness: Optional[float] = None
+    overall_confidence: Optional[float] = None
+    is_playback_repetition: bool = False
+    is_time_synchronized: bool = False
+    ingested_at: float = 0.0
+
+
+class CameraHealthPayload(BaseModel):
+    """Per-camera health snapshot sent inside the pipeline heartbeat."""
+    camera_id: str
+    status: str = "offline"  # online / offline / reconnecting
+    connection_state: Optional[str] = None  # see anpr/camera_manager.py ConnectionState
+    frames_read: int = 0
+    frames_processed: int = 0
+    frames_dropped: int = 0
+    vehicles_detected: int = 0
+    tracks_active: int = 0
+    matches: int = 0
+    reconnect_count: int = 0
+    last_frame_time: Optional[float] = None
+    last_frame_received: float = 0.0
+    current_error: Optional[str] = None
+    worker_alive: bool = False
+
+
+class HeartbeatPayload(BaseModel):
+    pipeline_id: str = "main"
+    cameras_configured: int = 0
+    cameras_connected: int = 0
+    cameras_active: int = 0
+    vehicles_detected: int = 0
+    tracks_created: int = 0
+    active_targets: int = 0
+    candidates_created: int = 0
+    ocr_attempts: int = 0
+    ocr_success: int = 0
+    api_failures: int = 0
+    per_camera: Optional[List[CameraHealthPayload]] = None

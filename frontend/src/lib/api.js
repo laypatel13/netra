@@ -44,6 +44,13 @@ export async function api(path, options = {}) {
   return res.json();
 }
 
-/** Resolve a backend-relative asset path (thumbnails, HLS playlists) to the proxy. */
-export const asset = (path) =>
-  !path ? null : path.startsWith("/") ? `${API_BASE}${path}` : path;
+/**
+ * Resolve a backend-relative asset path (thumbnails, HLS playlists, evidence
+ * crops) to the proxy. Absolute URLs pass through untouched; bare relative
+ * paths like "data/evidence/..." get their leading slash added.
+ */
+export const asset = (path) => {
+  if (!path) return null;
+  if (/^https?:\/\//.test(path)) return path;
+  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+};

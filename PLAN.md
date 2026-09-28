@@ -20,7 +20,7 @@ This document is the single source of truth for context, architecture, endpoints
 | Area | Status |
 |---|---|
 | Backend skeleton (FastAPI + SQLAlchemy + GeoAlchemy2) | Done |
-| Database: Supabase (primary) + local Docker Postgres/PostGIS (dev fallback) | Wired - `DATABASE_URL` env var switches between them, `Base.metadata.create_all()` auto-creates schema on either. Not yet pointed at a live Supabase project - see Section 5a. |
+| Database: Supabase (primary) + local Docker Postgres/PostGIS (dev fallback) | Wired for a **fresh** schema through `DATABASE_URL`. Existing databases require an explicit migration/reset; `create_all()` does not alter existing tables. See Section 5a. |
 | Camera registry (manual / bulk JSON / bulk CSV onboarding, RBAC, audit log) | Done |
 | GIS map (Leaflet, department/status filters) | Done, **plus route-on-map** (polyline + numbered stop markers with thumbnails) |
 | Gap-analysis report (per-department coverage, stale cameras, missing depts) | Done, has its own page (`/gap-analysis`) and a summary strip on the Dashboard |
@@ -224,7 +224,7 @@ These match the officially suggested stacks for Models 1 and 2 - not mandatory, 
 Why Supabase is the right call here, specifically for a 6-day hackathon finish:
 - **You need a URL to submit anyway** (hosted platform URL is an optional-but-valuable submission item, and the government-feed live demo needs *something* reachable). Supabase gives you a managed, always-on Postgres without standing up your own server just for the database.
 - **PostGIS is a checkbox, not a chore** - Supabase ships PostGIS as an enablable extension (`CREATE EXTENSION IF NOT EXISTS postgis;` in the SQL Editor, already documented in `database.py`'s docstring), so nothing about the `Geography` columns in `models.py` needs to change.
-- **Schema creation is already automatic** - `main.py` calls `Base.metadata.create_all(bind=engine)` on startup, so pointing `DATABASE_URL` at a fresh Supabase project and starting the backend once is the entire migration step. No Alembic, no manual SQL needed for first setup.
+- **Fresh schema creation is automatic; migrations are not.** `main.py` calls `Base.metadata.create_all(bind=engine)`, so pointing `DATABASE_URL` at a fresh Supabase project and starting the backend once creates the initial schema. It does **not** add columns, constraints, or enum values to an already-populated database. Until a versioned migration system is added, make a backup and use an explicit migration/reset procedure before deploying model changes.
 - **Free tier is enough for this scale** - a few thousand detection rows and 30 cameras is trivial for Supabase's free-tier Postgres.
 
 Caveats to actually watch for before the live demo:
@@ -373,3 +373,28 @@ Must address, in the HLD/PPT:
 - Demo recordings are a graded submission item, not an afterthought - budget dedicated time for them (see `TIMELINE.md`), don't cram them into the integration-test day.
 
 See `TIMELINE.md` for the day-by-day execution schedule.
+
+
+---
+
+## 14. Investigation pipeline
+
+Extends Model 2 for the hackathon-day test case (FAQ 27-28): a designated plate must be tracked across cameras, with the complete route and a timestamped, location-wise movement history as output. `README.md` ("Investigation mode") walks through the data flow.
+
+| Component | File(s) |
+|---|---|
+| Multi-camera orchestrator | anpr/multi_camera.py - shared inference queue, per-camera workers |
+| Per-track evidence path | anpr/investigation_pipeline.py, evidence_buffer.py, quality.py, enhance.py |
+| OCR consensus + scoring | anpr/ocr_consensus.py, scoring.py, target_filter.py |
+| Frame budget | anpr/motion_gate.py (MOG2), frame_sampler.py |
+| Camera connection state | anpr/camera_manager.py |
+| Cross-camera link feasibility | anpr/linking.py (called by the backend) |
+| Route engine | backend/app/investigation_service.py |
+| API | backend/app/routers/investigations.py |
+| Workstation UI | frontend/src/pages/Investigation.jsx |
+
+**Timing across cameras.** Observations carry the wall-clock time the vehicle was last seen. Per-stream PTS is still captured for provenance, but it restarts near zero on every connection and can't order sightings on different cameras - same reasoning as `detections.py`'s use of `created_at` (Section 8).
+
+**When two sightings link.** Same target (via each observation's candidate track), different cameras, no contradicting attributes, and a gap that fits the travel-time bounds: a configured `CameraGraphEdge` if one exists, otherwise straight-line distance between the cameras' registered locations at 120 km/h as the minimum and the 2-hour search window as the maximum. A camera with no location gives "unknown" timing and never extends a route.
+
+**Data model.** InvestigationTarget, VehicleTrack, TrackEvidence, VehicleObservation, CameraGraphEdge, CrossCameraLinkCandidate, RouteChain (+ RouteChainObservation, RouteChainLink), InvestigationState, EvidenceReview, GraphVersion, PipelineHeartbeat, InvestigationEvent. New tables only; existing tables are unchanged, so `create_all()` picks them up on an existing database.

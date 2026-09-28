@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   Video,
   X,
+  Crosshair,
 } from "lucide-react";
 import NetraLogo from "./NetraLogo.jsx";
 import ThemeToggle from "./ui/ThemeToggle.jsx";
@@ -22,6 +23,7 @@ const NAV = [
   { to: "/app/live", label: "Live viewer", icon: Video, model: "2" },
   { to: "/app/gap-analysis", label: "Gap analysis", icon: BarChart3, model: "1" },
   { to: "/app/watchlist", label: "Watchlist", icon: ShieldAlert, model: "2" },
+  { to: "/app/investigation", label: "Investigation", icon: Crosshair, model: "2" },
 ];
 
 const ALERT_POLL_MS = 10000;

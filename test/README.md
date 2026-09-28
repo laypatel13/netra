@@ -40,7 +40,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8010   # pick any free port; 8000 collides with other local projects on some machines
 ```
-Tables are created automatically on first boot (`Base.metadata.create_all()` in `main.py`). There's no Alembic in this project - if you change `models.py`, you need to manually `DROP TABLE <changed tables> CASCADE;` against the dev DB and restart the backend so it recreates them with the new schema. This is a real, known rough edge, not an oversight.
+Tables are created automatically only on first boot (`Base.metadata.create_all()` in `main.py`). There's no Alembic in this project: if you change `models.py`, an existing database is **not** upgraded automatically. Back up any needed data, then run an explicit migration or reset/recreate the development schema before restarting the backend. This is a real, known rough edge, not an oversight.
 
 **Frontend:**
 ```bash
@@ -103,3 +103,39 @@ Run this after the automated check passes, to confirm the actual user-facing exp
 The old top-level URLs (`/registry`, `/live`, `/gap-analysis`, `/watchlist`) still work - they redirect to their `/app/...` equivalents.
 
 If any of these don't match what's described, that's a real regression worth flagging - not expected behavior.
+
+## 7. Investigation mode
+
+Needs the backend, the frontend, and the pipeline in investigation mode (see `README.md` "Investigation mode" for how it works):
+
+```bash
+cd anpr
+python pipeline.py --backend http://127.0.0.1:8010 --camera-ids cam01,cam02,cam04 --investigation   # live sandbox feeds
+python pipeline.py --backend http://127.0.0.1:8010 --video sample.mp4 --investigation                # local file
+```
+
+Cross-camera routes only link cameras that have a location in the registry, so seed `test/seed_data/cameras_seed.csv` first (section 4).
+
+Click-through on `/app/investigation`:
+
+1. Create a target with a plate, a vehicle type, or a colour.
+2. Within about 10s the pipeline picks it up; candidates appear under "Unreviewed Candidates" as matching vehicles pass.
+3. Click a candidate to see its evidence frames (raw and enhanced), OCR reads, and score breakdown.
+4. Verify or reject it. A rejection must also invalidate any route chain that used it.
+5. Once the target is seen on two or more cameras, "Historical Route Reconstruction" shows one chain in time order, with registry names, not raw camera ids.
+6. Pause/resume and discard (with or without deleting evidence) from the target list.
+
+## 8. Automated tests
+
+The pure unit tests (OCR consensus, motion gate, quality, linking, scoring) run anywhere. The database tests empty every table between tests, so they only run against a throwaway PostGIS named in `NETRA_TEST_DATABASE_URL`, never the dev database:
+
+```bash
+docker run -d --rm --name netra-testdb -p 55433:5432 \
+  -e POSTGRES_USER=netra -e POSTGRES_PASSWORD=netra -e POSTGRES_DB=netra_test postgis/postgis:16-3.4
+
+cd backend
+NETRA_TEST_DATABASE_URL=postgresql://netra:netra@localhost:55433/netra_test pytest ../test
+
+cd ../anpr
+pytest test_evidence_engine.py test_vision_semantics.py test_pipeline.py
+```
