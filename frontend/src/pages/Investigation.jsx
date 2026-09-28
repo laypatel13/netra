@@ -1,9 +1,10 @@
 import { Fragment, useState, useEffect, useRef, useCallback } from "react";
 import {
   Check, X, Crosshair, AlertCircle, Camera, Search,
-  AlertTriangle, Loader2, Plus, Eye, ChevronRight, MapPin, Play, Pause,
+  AlertTriangle, Loader2, Plus, ChevronRight, MapPin, Play, Pause,
 } from "lucide-react";
 import { api, asset } from "../lib/api.js";
+import { vehicleLabel } from "../lib/format.js";
 import { Card, CardHeader, CardBody } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 import Badge from "../components/ui/Badge.jsx";
@@ -21,6 +22,9 @@ const TIER_TONES = {
   strong_candidate: "warn",
   attribute_candidate: "neutral",
 };
+
+/** A plate if there is one, otherwise the description being hunted ("White car"). */
+const targetLabel = (t) => t.plate_number || vehicleLabel(t.vehicle_color, t.vehicle_type);
 
 const CATEGORY_LABELS = {
   stolen: "Stolen Vehicle",
@@ -233,10 +237,19 @@ export default function Investigation() {
                   key={t.id}
                   className={`p-4 cursor-pointer transition-colors relative ${selectedTargetId === t.id ? 'bg-brand-soft/30 border-l-2 border-brand' : 'hover:bg-surface-2 border-l-2 border-transparent'}`}
                   onClick={() => setSelectedTargetId(t.id)}
+                  onKeyDown={(e) => {
+                    if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                      e.preventDefault();
+                      setSelectedTargetId(t.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={selectedTargetId === t.id}
                 >
                   <div className="flex justify-between items-start">
                     <div>
-                      <div className="font-mono font-medium text-[15px]">{t.plate_number || "Unknown Plate"}</div>
+                      <div className={`font-medium text-[15px] ${t.plate_number ? "font-mono" : ""}`}>{targetLabel(t)}</div>
                       <div className="text-xs text-ink-3 mt-1">{CATEGORY_LABELS[t.category]}</div>
                     </div>
                     <div className="flex gap-1">
@@ -351,7 +364,6 @@ export default function Investigation() {
                 <Card>
                   <CardHeader 
                     title="Historical Route Reconstruction" 
-                    icon={Map} 
                     actions={
                         <Button variant="ghost" size="sm" onClick={() => setShowSuperseded(!showSuperseded)}>
                            {showSuperseded ? "Hide" : "Show"} Superseded/Invalid
@@ -402,7 +414,7 @@ export default function Investigation() {
 
               {/* TIMELINE */}
               <Card>
-                <CardHeader title="Chronological Timeline" icon={Clock} />
+                <CardHeader title="Chronological Timeline" />
                 <CardBody className="p-5">
                   <div className="relative border-l-2 border-line ml-3 space-y-7">
                     {timelineData?.timeline?.map((evt, idx) => (
@@ -465,7 +477,7 @@ export default function Investigation() {
               {/* PENDING CANDIDATES */}
               {candidates.length > 0 && (
                 <Card>
-                  <CardHeader title="Unreviewed Candidates" icon={Crosshair} />
+                  <CardHeader title="Unreviewed Candidates" />
                   <div className="divide-y divide-line">
                     {candidates.filter(c => c.status === 'completed').map(c => (
                       <div 
@@ -497,7 +509,7 @@ export default function Investigation() {
         {/* PANEL 3: EVIDENCE VIEWER */}
         <div className="lg:col-span-4 flex flex-col gap-4 min-h-0">
           <Card className="flex-1 flex flex-col min-h-0">
-            <CardHeader title="Evidence & Review" icon={Eye} />
+            <CardHeader title="Evidence & Review" />
             
             {!selectedItem ? (
               <div className="flex-1 flex flex-col items-center justify-center text-ink-3 text-sm gap-2">
@@ -695,7 +707,7 @@ export default function Investigation() {
             </div>
             <div className="p-4 text-sm text-ink-2">
               <p className="mb-4">
-                You are about to discard the investigation for <strong className="font-mono text-ink">{targetToDelete.plate_number || "Unknown Plate"}</strong>.
+                You are about to discard the investigation for <strong className="font-mono text-ink">{targetLabel(targetToDelete)}</strong>.
               </p>
               <p className="mb-4 text-xs text-ink-3">
                 Please choose how to handle the evidence data that has already been gathered for this subject.

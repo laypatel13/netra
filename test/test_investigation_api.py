@@ -72,7 +72,8 @@ def test_pipeline_ingest_reconstructs_route_with_real_timestamps(client):
     assert chains[0]["cameras_visited"] == ["cam04", "cam02", "cam01"]
     assert all(link["temporal_feasibility"] == "valid" for link in chains[0]["links"])
     first_seen = datetime.fromisoformat(chains[0]["timestamps"][0])
-    assert abs(first_seen.timestamp() - datetime.utcfromtimestamp(start).timestamp()) < 1
+    assert first_seen.utcoffset() is not None, "timestamps must carry their UTC offset"
+    assert abs(first_seen.timestamp() - start) < 1
 
 
 def test_destructive_endpoints_require_admin(client, db_session):

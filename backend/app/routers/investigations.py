@@ -10,7 +10,7 @@ Every operator action that changes or deletes investigation data requires
 X-Role: admin (app/dependencies.py).
 """
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
@@ -76,7 +76,12 @@ def _value(v):
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
-    return dt.isoformat() if dt else None
+    """ISO 8601 with an explicit UTC offset. Columns hold naive UTC
+    (datetime.utcnow), and a bare "2026-09-28T13:42:08" is read by browsers
+    as *local* time, which would shift every sighting by the viewer's offset."""
+    if not dt:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
 
 
 def _get_target_or_404(db: Session, target_id: UUID) -> InvestigationTarget:
