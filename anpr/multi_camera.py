@@ -12,7 +12,7 @@ Architecture:
             ↓  inference worker polls round-robin
     YOLO inference worker(s) (default: 1, configurable)
             ↓  returns detections list
-    Camera-specific IOUTracker  (one per camera — NEVER shared)
+    Camera-specific IOUTracker  (one per camera - NEVER shared)
             ↓  tracked vehicles
     InvestigationPipeline  (per camera, but targets are global)
             ↓
@@ -27,8 +27,6 @@ IMPORTANT:
     - One camera failing does NOT stop others.
 """
 import logging
-import os
-import queue
 import threading
 import time
 import uuid
@@ -40,9 +38,9 @@ import numpy as np
 
 from color import dominant_color
 from detector import VehicleDetector, VehicleBox
-from camera_manager import ConnectionState, CameraHealthInfo
+from camera_manager import ConnectionState
 from frame_sampler import FrameSampler
-from motion_gate import MotionGate, MotionResult
+from motion_gate import MotionGate
 
 log = logging.getLogger("netra.multicam")
 
@@ -53,9 +51,9 @@ log = logging.getLogger("netra.multicam")
 @dataclass
 class CameraHealth:
     """
-    Mutable stats for a single camera worker — written by one thread only.
+    Mutable stats for a single camera worker - written by one thread only.
 
-    Enhanced for Phase 1: tracks connection state, dropped frames,
+    Tracks connection state, dropped frames,
     reconnect count, last frame times, and current error.
     """
     camera_id: str
@@ -74,7 +72,7 @@ class CameraHealth:
     reconnect_count: int = 0
     current_error: Optional[str] = None
     worker_alive: bool = False
-    # Phase 20: Motion gate stats
+    # Motion gate stats
     frames_skipped_no_motion: int = 0
     frames_motion_roi: int = 0
     frames_full_detect: int = 0
@@ -104,7 +102,7 @@ class GlobalStats:
     matches: int = 0
     evidence_buffers: int = 0
     tracks_created: int = 0
-    # Phase 20: Motion gate stats
+    # Motion gate stats
     frames_skipped_no_motion: int = 0
     frames_motion_roi: int = 0
     frames_full_detect: int = 0
@@ -147,7 +145,7 @@ class GlobalStats:
 
 
 # ---------------------------------------------------------------------------
-# Simple IoU-based tracker (no YOLO — accepts pre-computed detections)
+# Simple IoU-based tracker (no YOLO - accepts pre-computed detections)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -162,7 +160,7 @@ class _TrackedObject:
 
 @dataclass
 class TrackedDetection:
-    """Output of the SimpleIOUTracker — same interface as tracker.TrackedVehicle."""
+    """Output of the SimpleIOUTracker - same interface as tracker.TrackedVehicle."""
     track_id: int
     x1: int
     y1: int
@@ -196,7 +194,7 @@ class SimpleIOUTracker:
     This replaces VehicleTracker for the multi-camera architecture so that
     only the inference worker needs a YOLO model instance.
 
-    Thread-safety: NOT thread-safe — each camera thread owns its own instance.
+    Thread-safety: NOT thread-safe - each camera thread owns its own instance.
     """
 
     IOU_THRESHOLD = 0.25
@@ -219,7 +217,7 @@ class SimpleIOUTracker:
         matched_dets: set[int] = set()
         assignments: list[tuple[int, int]] = []  # (track_idx, det_idx)
 
-        # Greedy matching — compute all IoU pairs, assign best first
+        # Greedy matching - compute all IoU pairs, assign best first
         pairs = []
         for t_idx, trk in enumerate(self._tracks):
             for d_idx, dbox in enumerate(det_boxes):
@@ -265,11 +263,8 @@ class SimpleIOUTracker:
                 surviving.append(trk)
         self._tracks = surviving
 
-        # Build output — return only tracks that were seen this frame
+        # Build output - return only tracks that were seen this frame
         results = []
-        all_matched_track_ids = {self._tracks[t_idx].track_id
-                                 for t_idx, _ in assignments
-                                 if t_idx < len(self._tracks)}
         # Re-check via track_id since list indices may have shifted
         seen_ids = set()
         for t_idx, d_idx in assignments:
@@ -306,13 +301,13 @@ class SimpleIOUTracker:
         return results
 
     def reset(self):
-        """Clear all tracks — call after camera reconnect or scene cut."""
+        """Clear all tracks - call after camera reconnect or scene cut."""
         self._tracks.clear()
         self._next_id = 1
 
 
 # ---------------------------------------------------------------------------
-# Inference Queue — fair, bounded, newest-frame-wins per camera
+# Inference Queue - fair, bounded, newest-frame-wins per camera
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -350,7 +345,7 @@ class InferenceQueue:
                 self._camera_order.append(camera_id)
 
     def put(self, item: FrameItem):
-        """Submit a frame — replaces any existing frame for this camera."""
+        """Submit a frame - replaces any existing frame for this camera."""
         with self._lock:
             self._slots[item.camera_id] = item
         self._event.set()
@@ -391,7 +386,7 @@ class InferenceQueue:
 
 
 # ---------------------------------------------------------------------------
-# Inference Worker — owns YOLO models + per-camera motion gates
+# Inference Worker - owns YOLO models + per-camera motion gates
 # ---------------------------------------------------------------------------
 
 class InferenceWorker(threading.Thread):
@@ -399,7 +394,7 @@ class InferenceWorker(threading.Thread):
     Dedicated thread that owns the YOLO model(s) and processes frames from
     the InferenceQueue.
 
-    Phase 20: Now includes per-camera MotionGate instances.  The flow is:
+    Now includes per-camera MotionGate instances.  The flow is:
       1. Run motion detection (CPU-only, ~0.5ms)
       2. If no motion → skip YOLO entirely, dispatch empty detections
       3. If motion with ROIs → run yolov8n on ROI crops only
@@ -467,7 +462,7 @@ class InferenceWorker(threading.Thread):
                     continue
 
                 if not motion.has_motion:
-                    # No motion — skip YOLO entirely
+                    # No motion - skip YOLO entirely
                     callback([], item, True)  # skipped=True
                     if self.global_stats:
                         self.global_stats.frames_skipped_no_motion += 1
@@ -495,7 +490,7 @@ class InferenceWorker(threading.Thread):
                           item.camera_id, e, exc_info=True)
 
     def reset_motion_gate(self, camera_id: str):
-        """Reset motion gate for a camera — call after reconnect/scene cut."""
+        """Reset motion gate for a camera - call after reconnect/scene cut."""
         if camera_id in self._motion_gates:
             self._motion_gates[camera_id].reset()
             log.info("[InferenceWorker] Reset MotionGate for camera %s", camera_id)
@@ -505,7 +500,7 @@ class InferenceWorker(threading.Thread):
 
 
 # ---------------------------------------------------------------------------
-# Camera Worker — captures frames and submits to inference queue
+# Camera Worker - captures frames and submits to inference queue
 # ---------------------------------------------------------------------------
 
 WARMUP_FRAMES = 15
@@ -588,9 +583,8 @@ class CameraWorker(threading.Thread):
         if self.tracker is not None:
             return
 
-        from evidence_buffer import BufferManager, Observation
+        from evidence_buffer import BufferManager
         from investigation_pipeline import InvestigationPipeline
-        from quality import compute_quality
 
         self.tracker = SimpleIOUTracker()
         self.buffer_mgr = BufferManager(self.camera_id)
@@ -625,7 +619,7 @@ class CameraWorker(threading.Thread):
                     self.health.connection_state = ConnectionState.RECONNECTING
                     self.health.reconnect_count += 1
                     self.health.current_error = "Stream unreachable"
-                    log.warning("[%s] RECONNECTING attempt=%d — retrying in %.0fs",
+                    log.warning("[%s] RECONNECTING attempt=%d - retrying in %.0fs",
                                 self.camera_id, self.health.reconnect_count, backoff)
                     # Sleep in short increments so we can respond to stop events
                     sleep_until = time.time() + backoff
@@ -666,7 +660,7 @@ class CameraWorker(threading.Thread):
                             # Loop video
                             log.info("[%s] Looping video file", self.camera_id)
                             break
-                        log.warning("[%s] FRAME_TIMEOUT — reconnecting", self.camera_id)
+                        log.warning("[%s] FRAME_TIMEOUT - reconnecting", self.camera_id)
                         self.health.status = "reconnecting"
                         self.health.connection_state = ConnectionState.RECONNECTING
                         self.health.current_error = "Frame read failed"
@@ -688,7 +682,7 @@ class CameraWorker(threading.Thread):
                             if pts_ms == last_pts_ms:
                                 frozen_count += 1
                                 if frozen_count > 30: # 30 consecutive identical PTS usually means stream is frozen
-                                    log.warning("[%s] FROZEN_STREAM detected (PTS stuck at %.1f) — reconnecting", self.camera_id, pts_ms)
+                                    log.warning("[%s] FROZEN_STREAM detected (PTS stuck at %.1f) - reconnecting", self.camera_id, pts_ms)
                                     self.health.status = "reconnecting"
                                     self.health.connection_state = ConnectionState.RECONNECTING
                                     self.health.current_error = "Frozen stream (stuck PTS)"
@@ -766,7 +760,7 @@ class CameraWorker(threading.Thread):
             self._pending_results.clear()
 
         for detections, frame_item, skipped in results:
-            # Phase 20: If frame was skipped by motion gate, still do housekeeping
+            # If frame was skipped by motion gate, still do housekeeping
             if skipped:
                 self.health.frames_skipped_no_motion += 1
                 # Still expire stale track buffers so they don't accumulate
@@ -912,7 +906,6 @@ class MultiCameraOrchestrator:
         self.investigation_debug = investigation_debug
         self.plate_reader = plate_reader
 
-        import uuid
         self.session_id = str(uuid.uuid4())
 
         # Shared state
@@ -999,7 +992,7 @@ class MultiCameraOrchestrator:
             for w in self.camera_workers:
                 w.join()
         except KeyboardInterrupt:
-            log.info("KeyboardInterrupt — stopping all workers")
+            log.info("KeyboardInterrupt - stopping all workers")
             self.stop()
 
     def stop(self):
@@ -1065,7 +1058,7 @@ class MultiCameraOrchestrator:
 
         # Global aggregates
         gs = self.global_stats
-        print(f"\n  GLOBAL:")
+        print("\n  GLOBAL:")
         print(f"    ocr_attempts={gs.ocr_attempts}")
         print(f"    ocr_success={gs.ocr_success}")
         print(f"    candidates_created={gs.candidate_count}")
@@ -1073,7 +1066,7 @@ class MultiCameraOrchestrator:
         print(f"    api_failures={gs.api_failures}")
         print(f"    target_evaluations={gs.target_evaluations}")
         print(f"    matches={gs.matches}")
-        print(f"  MOTION GATE:")
+        print("  MOTION GATE:")
         print(f"    frames_skipped_no_motion={gs.frames_skipped_no_motion}")
         print(f"    frames_motion_roi={gs.frames_motion_roi}")
         print(f"    frames_full_detect={gs.frames_full_detect}")
@@ -1116,6 +1109,5 @@ class MultiCameraOrchestrator:
             "ocr_attempts": gs.ocr_attempts,
             "ocr_success": gs.ocr_success,
             "api_failures": gs.api_failures,
-            "stats": gs.to_dict(),
             "per_camera": per_camera,
         }

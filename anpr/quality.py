@@ -1,7 +1,7 @@
 """
 Frame quality scoring for evidence selection.
 
-The goal is NOT to determine whether an image is aesthetically good — it's to
+The goal is NOT to determine whether an image is aesthetically good - it's to
 determine which frames are most useful for recognition/OCR.  A sharp, well-
 exposed, large vehicle crop where the plate region is visible is worth more
 than a blurry, dark, distant one even if the former is compositionally boring.
@@ -53,7 +53,7 @@ def _normalize(value: float, lo: float, hi: float) -> float:
 
 def sharpness_score(crop) -> float:
     """
-    Laplacian variance — higher means sharper edges.
+    Laplacian variance - higher means sharper edges.
 
     This is the standard measure used in autofocus systems and image-quality
     assessments.  A vehicle crop with crisp edges (body lines, plate
@@ -85,7 +85,7 @@ def blur_score(crop) -> float:
     energy_y = np.mean(np.abs(sobel_y))
 
     if energy_y < 1e-6:
-        return 0.5  # can't determine — neutral
+        return 0.5  # can't determine - neutral
 
     # Ratio of horizontal to vertical gradients; close to 1 = balanced = sharp
     ratio = energy_x / energy_y

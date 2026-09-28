@@ -201,12 +201,6 @@ class ObservationStatus(str, enum.Enum):
     FINALIZED = "finalized"
 
 
-class VerificationAction(str, enum.Enum):
-    VERIFIED = "verified"
-    REJECTED = "rejected"
-    PENDING = "pending"
-
-
 class RouteChainStatus(str, enum.Enum):
     ACTIVE = "active"
     EXTENDED = "extended"
@@ -240,18 +234,12 @@ class TimestampSource(str, enum.Enum):
 
 
 class MachineAssessment(str, enum.Enum):
-    VERIFIED = "verified"
-    PLAUSIBLE = "plausible"
-    UNCERTAIN = "uncertain"
+    """Mirrors anpr/linking.py LinkResult.status - keep the two in step."""
+    POSSIBLE = "possible"
+    WEAK = "weak"
+    CONFLICTING = "conflicting"
     REJECTED = "rejected"
     UNKNOWN = "unknown"
-
-class ProvenanceType(str, enum.Enum):
-    LIVE_SYNCHRONIZED = "LIVE_SYNCHRONIZED"
-    HISTORICAL_SYNCHRONIZED = "HISTORICAL_SYNCHRONIZED"
-    HISTORICAL_UNSYNCHRONIZED = "HISTORICAL_UNSYNCHRONIZED"
-    UNKNOWN = "UNKNOWN"
-    REPLAY = "REPLAY"
 
 class HumanReviewState(str, enum.Enum):
     UNREVIEWED = "unreviewed"
@@ -344,44 +332,13 @@ class TrackEvidence(Base):
     vehicle_type = Column(Enum(VehicleType), nullable=True)
     vehicle_color = Column(String, nullable=True)
     
-    # Phase 3: Evidence provenance
+    # Evidence provenance
     evidence_state = Column(Enum(EvidenceState), nullable=True)
     unknown_reason = Column(Enum(EvidenceUnknownReason), nullable=True)
     extraction_method = Column(String, nullable=True)
     
     mode = Column(Enum(Mode), nullable=False, default=Mode.REAL)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class RecordingSession(Base):
-    """
-    Metadata for a specific camera's recording during a session.
-    Provides strict provenance regarding timing, synchronization, and replay loops.
-    """
-    __tablename__ = "recording_sessions"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(String, nullable=False, index=True)
-    camera_id = Column(String, nullable=False, index=True)
-    
-    source_date_time = Column(DateTime, nullable=True)
-    timestamp_quality = Column(Enum(TimestampQuality), nullable=False, default=TimestampQuality.UNRELIABLE)
-    provenance_type = Column(Enum(ProvenanceType), nullable=False, default=ProvenanceType.UNKNOWN)
-    
-    source_identifier = Column(String, nullable=True)
-    synchronization_status = Column(String, nullable=False, default="unknown")
-    
-    start_time = Column(DateTime, nullable=True)
-    end_time = Column(DateTime, nullable=True)
-    
-    graph_version = Column(Integer, nullable=False, default=1)
-    mode = Column(Enum(Mode), nullable=False, default=Mode.REAL)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    __table_args__ = (
-        UniqueConstraint('session_id', 'camera_id', name='uq_session_camera'),
-    )
 
 
 class VehicleObservation(Base):
@@ -393,7 +350,6 @@ class VehicleObservation(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     camera_id = Column(String, index=True, nullable=False)
     session_id = Column(String, nullable=False, index=True)
-    recording_id = Column(UUID(as_uuid=True), ForeignKey("recording_sessions.id"), nullable=True)
     track_id = Column(Integer, nullable=False)  # local to camera/session
     candidate_id = Column(UUID(as_uuid=True), ForeignKey("vehicle_tracks.id"), nullable=True)
     
@@ -600,7 +556,7 @@ class InvestigationState(Base):
 class EvidenceReview(Base):
     """
     Append-only review model for human verification events.
-    Does NOT own idempotency — that belongs to InvestigationEvent.
+    Does NOT own idempotency - that belongs to InvestigationEvent.
     """
     __tablename__ = "evidence_reviews"
 
@@ -702,54 +658,3 @@ class InvestigationEvent(Base):
     __table_args__ = (
         Index("ix_inv_event_type_entity", "event_type", "entity_id", "status"),
     )
-
-
-class TransitionEligibility(str, enum.Enum):
-    ELIGIBLE = "eligible"
-    INELIGIBLE = "ineligible"
-    UNKNOWN = "unknown"
-
-
-class CameraTransitionRecord(Base):
-    """
-    Durable record of a temporal transition between two cameras, 
-    acting as the foundation for the prediction/transition dataset.
-    """
-    __tablename__ = "camera_transitions"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    source_camera_id = Column(String, ForeignKey("cameras.camera_id"), nullable=False)
-    destination_camera_id = Column(String, ForeignKey("cameras.camera_id"), nullable=False)
-    
-    source_observation_id = Column(UUID(as_uuid=True), ForeignKey("vehicle_observations.id"), nullable=False)
-    destination_observation_id = Column(UUID(as_uuid=True), ForeignKey("vehicle_observations.id"), nullable=False)
-    
-    camera_edge_id = Column(UUID(as_uuid=True), ForeignKey("camera_graph_edges.id"), nullable=True)
-    
-    observed_time_delta = Column(Float, nullable=False)  # seconds
-    timestamp_source = Column(Enum(TimestampSource), nullable=False)
-    temporal_feasibility = Column(String, nullable=False)
-    
-    attribute_evidence = Column(JSON, nullable=True)
-    evidence_completeness = Column(Float, nullable=False)
-    link_score = Column(Float, nullable=False)
-    
-    session_id = Column(String, nullable=True)
-    investigation_id = Column(String, nullable=True)
-    machine_assessment = Column(Enum(MachineAssessment), nullable=False, default=MachineAssessment.UNKNOWN)
-    human_review_state = Column(Enum(HumanReviewState), nullable=False, default=HumanReviewState.UNREVIEWED)
-    transition_status = Column(Enum(TransitionEligibility), nullable=False, default=TransitionEligibility.UNKNOWN)
-    exclusion_reason = Column(String, nullable=True)
-    timestamp_quality = Column(Enum(TimestampQuality), nullable=False, default=TimestampQuality.VALID)
-    
-    graph_version = Column(Integer, nullable=False, default=1)
-    mode = Column(Enum(Mode), nullable=False, default=Mode.REAL)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        Index("ix_cam_trans_src_dst", "source_camera_id", "destination_camera_id"),
-        Index("ix_cam_trans_status", "transition_status", "mode"),
-        Index("ix_cam_trans_unique_edge", "source_observation_id", "destination_observation_id", "camera_edge_id", "graph_version", unique=True),
-    )
-

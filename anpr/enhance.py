@@ -1,7 +1,7 @@
 """
 Conservative image enhancement for vehicle crops.
 
-Intended to improve downstream OCR/recognition — NOT to reconstruct missing
+Intended to improve downstream OCR/recognition - NOT to reconstruct missing
 information.  The original raw crop is NEVER overwritten; both raw and enhanced
 versions are stored separately so a human verifier always has the unmodified
 evidence.
@@ -46,7 +46,7 @@ UNSHARP_STRENGTH = 0.5      # blending weight of the sharpened component
 
 @dataclass
 class EnhancementResult:
-    """Result of enhancement — always contains the raw crop."""
+    """Result of enhancement - always contains the raw crop."""
     raw_crop: np.ndarray
     enhanced_crop: Optional[np.ndarray]
     enhancement_applied: bool
@@ -118,7 +118,7 @@ def enhance_crop(
 
     Parameters:
         raw_crop: original BGR vehicle crop
-        enable: master switch — if False, returns raw only
+        enable: master switch - if False, returns raw only
         upscale_factor: resize factor (1 = no resize)
         do_denoise: apply denoising
         do_clahe: apply CLAHE contrast normalization
@@ -173,7 +173,7 @@ def enhance_crop(
         )
 
     except Exception as e:
-        # Enhancement failed — return raw crop only, never crash
+        # Enhancement failed - return raw crop only, never crash
         return EnhancementResult(
             raw_crop=raw_crop,
             enhanced_crop=None,

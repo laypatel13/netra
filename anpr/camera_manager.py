@@ -8,19 +8,19 @@ One broken camera must NOT stop other cameras.
 A camera is CONNECTED only when the worker is actually receiving frames.
 
 Connection states:
-    DISCONNECTED  — not started or cleanly stopped
-    CONNECTING    — worker is attempting to open the stream
-    CONNECTED     — actively receiving frames
-    DEGRADED      — connected but experiencing issues (frame timeouts)
-    RECONNECTING  — lost connection, retrying with backoff
-    STOPPED       — explicitly stopped by user/manager
-    ERROR         — unrecoverable error, not retrying
+    DISCONNECTED  - not started or cleanly stopped
+    CONNECTING    - worker is attempting to open the stream
+    CONNECTED     - actively receiving frames
+    DEGRADED      - connected but experiencing issues (frame timeouts)
+    RECONNECTING  - lost connection, retrying with backoff
+    STOPPED       - explicitly stopped by user/manager
+    ERROR         - unrecoverable error, not retrying
 """
 import logging
 import signal
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Callable
 
@@ -194,11 +194,11 @@ class CameraManager:
                 return False
 
             if camera_id in self._workers and self._workers[camera_id].is_alive():
-                log.warning("[%s] Worker already running — skipping duplicate", camera_id)
+                log.warning("[%s] Worker already running - skipping duplicate", camera_id)
                 return False
 
             if self._worker_factory is None:
-                log.error("No worker factory set — call set_worker_factory() first")
+                log.error("No worker factory set - call set_worker_factory() first")
                 return False
 
             cam = self._cameras[camera_id]
@@ -283,7 +283,7 @@ class CameraManager:
                     break
                 self._global_stop.wait(timeout=1.0)
         except KeyboardInterrupt:
-            log.info("KeyboardInterrupt — stopping all workers")
+            log.info("KeyboardInterrupt - stopping all workers")
             self.stop_all()
 
     def get_health(self, camera_id: str) -> Optional[CameraHealthInfo]:
@@ -319,7 +319,7 @@ class CameraManager:
             original_sigint = signal.getsignal(signal.SIGINT)
 
             def _shutdown_handler(signum, frame):
-                log.info("Received signal %s — initiating clean shutdown", signum)
+                log.info("Received signal %s - initiating clean shutdown", signum)
                 self.stop_all()
                 # Call original handler (if any) to allow normal exit
                 if callable(original_sigint) and original_sigint not in (
@@ -332,5 +332,5 @@ class CameraManager:
             signal.signal(signal.SIGINT, _shutdown_handler)
             self._shutdown_registered = True
         except ValueError:
-            # Not on main thread — can't register signal handlers
+            # Not on main thread - can't register signal handlers
             pass

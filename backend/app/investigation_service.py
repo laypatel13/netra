@@ -1,5 +1,5 @@
 """
-Incremental Investigation State Engine — Phase 8.1 hardened implementation.
+Incremental investigation state engine: cross-camera links and route chains.
 
 Transaction strategy:
   Event claiming uses a short INSERT ... ON CONFLICT to atomically claim the event_id.
@@ -7,16 +7,15 @@ Transaction strategy:
   marked FAILED with retry semantics. This avoids holding a long-lived transaction
   across expensive linking/chain-extension work.
 """
-import uuid
 import sys
 import os
 import hashlib
 from datetime import datetime, timedelta
 from typing import List, Optional, Set
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import or_, and_, desc, case, func
+from sqlalchemy import or_, desc, case, func
 
 from app.models import (
     VehicleObservation,
@@ -27,12 +26,10 @@ from app.models import (
     RouteChainObservation,
     RouteChainLink,
     RouteChainStatus,
-    InvestigationTarget,
     InvestigationState,
     HumanReviewState,
     MachineAssessment,
     TimestampQuality,
-    TimestampSource,
     Mode,
     EvidenceReview,
     EvidenceReviewAction,
@@ -41,23 +38,22 @@ from app.models import (
     InvestigationEvent,
     InvestigationEventType,
     EventProcessingStatus,
-    CameraTransitionRecord,
-    TransitionEligibility,
+    Camera,
 )
 
-from app.prediction_service import record_transition
-
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "anpr"))
-try:
-    from linking import compare_observations, LinkResult
-except ImportError:
-    def compare_observations(*args, **kwargs):
-        pass
+from linking import compare_observations  # noqa: E402 - needs the sys.path entry above
 
-MAX_CHAIN_DEPTH = 10
-MAX_BRANCH_FACTOR = 5
-MAX_HYPOTHESES_PER_OBSERVATION = 10
 MAX_TIME_WINDOW_HOURS = 2
+# Fastest plausible average speed between two cameras when no configured
+# CameraGraphEdge exists. Straight-line distance / this speed gives the
+# minimum believable travel time; anything faster is a different vehicle
+# (or an OCR misread), not the same one.
+MAX_PLAUSIBLE_SPEED_KMH = 120.0
+# Taken off that minimum: stream latency differs per camera and registry
+# coordinates are approximate (seed_data places cameras from their names),
+# so a genuine fast hop between nearby cameras must not read as impossible.
+TIMING_SLACK_SECONDS = 60.0
 # Upper bound on cascade: never traverse more than this many entities
 MAX_CASCADE_ENTITIES = 500
 
@@ -113,7 +109,7 @@ def bump_graph_version(db: Session, mode: Mode, reason: str, edge_id=None) -> in
 
 
 # ─────────────────────────────────────────────────────────
-# F1/F2: Atomic event claiming + safe retry
+# Atomic event claiming + safe retry
 # ─────────────────────────────────────────────────────────
 
 def _claim_event(
@@ -142,7 +138,7 @@ def _claim_event(
             existing.status = EventProcessingStatus.PENDING
             db.commit()
             return existing
-        # PENDING — another worker is processing. Skip.
+        # PENDING - another worker is processing. Skip.
         return None
 
     # Try to insert
@@ -158,7 +154,7 @@ def _claim_event(
         db.commit()
         return new_event
     except IntegrityError:
-        # Another thread inserted first — roll back and re-read
+        # Another thread inserted first - roll back and re-read
         db.rollback()
         existing = db.query(InvestigationEvent).filter_by(event_id=event_id).first()
         if existing and existing.status == EventProcessingStatus.PROCESSED:
@@ -184,6 +180,46 @@ def _mark_failed(db: Session, event_id: str, error: str):
         db.commit()
 
 
+def _target_observations(db: Session, target_id):
+    """Observations belonging to a target, via their candidate track.
+
+    ``candidate_id`` is the only reliable link: camera-local track numbers
+    restart with every pipeline session, so matching on (camera_id, track_id)
+    would pull in unrelated vehicles from earlier runs.
+    """
+    target_tracks = db.query(VehicleTrack.id).filter(VehicleTrack.target_id == target_id)
+    return db.query(VehicleObservation).filter(
+        VehicleObservation.candidate_id.in_(target_tracks.scalar_subquery())
+    )
+
+
+def _travel_bounds(db: Session, src_camera_id: str, dst_camera_id: str, edge) -> Optional[tuple]:
+    """(min_seconds, max_seconds) a vehicle could take between two cameras.
+
+    A configured CameraGraphEdge wins. Otherwise fall back to the registry's
+    own coordinates: straight-line distance at MAX_PLAUSIBLE_SPEED_KMH is the
+    fastest believable transit, and the search window caps the slowest. Returns
+    None when either camera has no location, since timing can't be judged.
+    """
+    if edge is not None:
+        if not edge.enabled:
+            return None
+        return edge.min_travel_time, edge.max_travel_time
+
+    # One query on the Geography columns so PostGIS returns metres; passing
+    # the loaded WKB values back in would measure in degrees instead.
+    src, dst = aliased(Camera), aliased(Camera)
+    distance_m = (
+        db.query(func.ST_Distance(src.location, dst.location))
+        .filter(src.camera_id == src_camera_id, dst.camera_id == dst_camera_id)
+        .scalar()
+    )
+    if distance_m is None:  # either camera missing or has no location
+        return None
+    min_seconds = max(0.0, distance_m / (MAX_PLAUSIBLE_SPEED_KMH * 1000 / 3600) - TIMING_SLACK_SECONDS)
+    return min_seconds, MAX_TIME_WINDOW_HOURS * 3600
+
+
 # ─────────────────────────────────────────────────────────
 # Main entry points
 # ─────────────────────────────────────────────────────────
@@ -191,8 +227,8 @@ def _mark_failed(db: Session, event_id: str, error: str):
 def process_new_observation(db: Session, observation_id: str):
     """
     Incremental update when a new observation is added.
-    Uses atomic event claiming (F1) with processing in a separate
-    transaction boundary (F2) to avoid long-lived locks.
+    Uses atomic event claiming with processing in a separate
+    transaction boundary to avoid long-lived locks.
     """
     event_id = f"NEW_OBSERVATION:{observation_id}"
     event = _claim_event(
@@ -215,11 +251,12 @@ def _do_process_observation(
     if not obs:
         raise ValueError("Observation not found")
 
-    # Find relevant target (via tracks)
+    # Only observations produced from a persisted candidate track can belong
+    # to a target; see _target_observations.
     track = (
-        db.query(VehicleTrack)
-        .filter_by(camera_id=obs.camera_id, track_id=obs.track_id)
-        .first()
+        db.query(VehicleTrack).filter_by(id=obs.candidate_id).first()
+        if obs.candidate_id
+        else None
     )
     if not track or not track.target_id:
         _mark_processed(db, event)
@@ -246,176 +283,151 @@ def _do_process_observation(
     time_window_start = obs.observed_at - timedelta(hours=MAX_TIME_WINDOW_HOURS)
     time_window_end = obs.observed_at + timedelta(hours=MAX_TIME_WINDOW_HOURS)
 
-    related_tracks = db.query(VehicleTrack).filter_by(target_id=target_id).all()
-    track_filter = [(t.camera_id, t.track_id) for t in related_tracks]
-
-    if track_filter:
-        conditions = [
-            and_(
-                VehicleObservation.camera_id == c_id,
-                VehicleObservation.track_id == t_id,
-            )
-            for c_id, t_id in track_filter
-        ]
-
-        recent_obs = (
-            db.query(VehicleObservation)
-            .filter(
-                or_(*conditions),
-                VehicleObservation.observed_at >= time_window_start,
-                VehicleObservation.observed_at <= time_window_end,
-                VehicleObservation.mode == obs.mode,
-                VehicleObservation.human_review_state != HumanReviewState.REJECTED,
-            )
-            .all()
+    recent_obs = (
+        _target_observations(db, target_id)
+        .filter(
+            VehicleObservation.observed_at >= time_window_start,
+            VehicleObservation.observed_at <= time_window_end,
+            VehicleObservation.mode == obs.mode,
+            VehicleObservation.human_review_state != HumanReviewState.REJECTED,
         )
+        .all()
+    )
 
-        # F16: Fetch ALL edges (including disabled) to properly log 'missing_edge' and 'disabled_edge' rejections
-        all_edges = (
-            db.query(CameraGraphEdge)
-            .filter(CameraGraphEdge.mode == obs.mode)
-            .all()
+    all_edges = (
+        db.query(CameraGraphEdge)
+        .filter(CameraGraphEdge.mode == obs.mode)
+        .all()
+    )
+    edge_map = {
+        (e.source_camera_id, e.destination_camera_id): e for e in all_edges
+    }
+
+    new_links = []
+    for other_obs in recent_obs:
+        if other_obs.id == obs.id:
+            continue
+
+        if obs.observed_at < other_obs.observed_at:
+            src, dst = obs, other_obs
+        elif other_obs.observed_at < obs.observed_at:
+            src, dst = other_obs, obs
+        else:
+            continue  # same timestamp - skip
+            
+        if src.camera_id == dst.camera_id:
+            continue  # cross-camera links must be cross-camera
+
+        edge = edge_map.get((src.camera_id, dst.camera_id))
+
+        existing_link = (
+            db.query(CrossCameraLinkCandidate)
+            .filter_by(
+                source_observation_id=src.id,
+                destination_observation_id=dst.id,
+            )
+            .first()
         )
-        edge_map = {
-            (e.source_camera_id, e.destination_camera_id): e for e in all_edges
-        }
+        if existing_link:
+            continue
 
-        new_links = []
-        for other_obs in recent_obs:
-            if other_obs.id == obs.id:
-                continue
-
-            if obs.observed_at < other_obs.observed_at:
-                src, dst = obs, other_obs
-            elif other_obs.observed_at < obs.observed_at:
-                src, dst = other_obs, obs
-            else:
-                continue  # same timestamp — skip
-                
-            if src.camera_id == dst.camera_id:
-                continue  # cross-camera links must be cross-camera
-
-            # F16: Retrieve edge (could be None if missing, or disabled).
-            # Do NOT 'continue' if missing, so we can log 'missing_edge' eligibility failures!
-            edge = edge_map.get((src.camera_id, dst.camera_id))
-
-            existing_link = (
-                db.query(CrossCameraLinkCandidate)
-                .filter_by(
-                    source_observation_id=src.id,
-                    destination_observation_id=dst.id,
-                )
-                .first()
+        bounds = _travel_bounds(db, src.camera_id, dst.camera_id, edge)
+        res = compare_observations(src, dst, bounds)
+        if res:
+            link = CrossCameraLinkCandidate(
+                source_observation_id=src.id,
+                destination_observation_id=dst.id,
+                camera_edge_id=edge.id if edge else None,
+                temporal_feasibility=res.temporal_feasibility,
+                attribute_comparisons=res.attribute_comparisons,
+                evidence_completeness=res.evidence_completeness,
+                link_score=res.link_score,
+                explanation=res.explanation,
+                machine_assessment=MachineAssessment(res.status),
+                mode=obs.mode,
             )
-            if existing_link:
-                continue
+            db.add(link)
+            db.flush()
+            # Every link is kept for the reviewer, but only temporally
+            # valid, non-contradicted ones may extend a route.
+            if res.temporal_feasibility == "valid" and res.status == "possible":
+                new_links.append(link)
 
-            res = compare_observations(src, dst, edge)
-            if res:
-                link = CrossCameraLinkCandidate(
-                    source_observation_id=src.id,
-                    destination_observation_id=dst.id,
-                    camera_edge_id=edge.id if edge else None,
-                    temporal_feasibility=res.temporal_feasibility,
-                    attribute_comparisons=res.attribute_comparisons,
-                    evidence_completeness=res.evidence_completeness,
-                    link_score=res.link_score,
-                    machine_assessment=(
-                        MachineAssessment(res.status)
-                        if hasattr(MachineAssessment, res.status.upper())
-                        else MachineAssessment.UNKNOWN
-                    ),
-                    mode=obs.mode,
-                )
-                db.add(link)
-                db.flush()
-                # Preserve all links (even uncertain, rejected, or temporally impossible) for 
-                # data quality monitoring and prediction training eligibility.
-                record_transition(
-                    db, link, src, dst, current_gv,
-                    session_id=obs.session_id,
-                    investigation_id=str(target_id),
-                )
-                
-                # Only let valid, unrejected links alter route state
-                if res.status != "rejected" and res.temporal_feasibility != "impossible" and res.temporal_feasibility == "valid":
-                    new_links.append(link)
+    db.flush()
 
-        db.flush()
-
-        # Extend RouteChains incrementally
-        if not new_links:
-            fingerprint = compute_fingerprint(
-                str(target_id), [str(obs.id)], [], obs.mode, current_gv
+    # Extend RouteChains incrementally
+    if not new_links:
+        fingerprint = compute_fingerprint(
+            str(target_id), [str(obs.id)], [], obs.mode, current_gv
+        )
+        existing_chain = (
+            db.query(RouteChain).filter_by(route_fingerprint=fingerprint).first()
+        )
+        if not existing_chain:
+            chain = RouteChain(
+                target_id=target_id,
+                route_fingerprint=fingerprint,
+                graph_version=current_gv,
+                mode=obs.mode,
+                status=RouteChainStatus.ACTIVE,
+                evidence_completeness=obs.evidence_completeness,
             )
-            existing_chain = (
-                db.query(RouteChain).filter_by(route_fingerprint=fingerprint).first()
+            db.add(chain)
+            db.flush()
+            db.add(
+                RouteChainObservation(
+                    route_chain_id=chain.id,
+                    observation_id=obs.id,
+                    sequence_order=1,
+                )
             )
-            if not existing_chain:
-                chain = RouteChain(
-                    target_id=target_id,
-                    route_fingerprint=fingerprint,
-                    graph_version=current_gv,
-                    mode=obs.mode,
-                    status=RouteChainStatus.ACTIVE,
-                    evidence_completeness=obs.evidence_completeness,
+
+    for link in new_links:
+        if link.source_observation_id != obs.id:
+            chains_to_extend = (
+                db.query(RouteChain)
+                .join(RouteChainObservation)
+                .filter(
+                    RouteChain.target_id == target_id,
+                    RouteChain.is_superseded == 0,
+                    RouteChainObservation.observation_id
+                    == link.source_observation_id,
                 )
-                db.add(chain)
-                db.flush()
-                db.add(
-                    RouteChainObservation(
-                        route_chain_id=chain.id,
-                        observation_id=obs.id,
-                        sequence_order=1,
-                    )
+                .all()
+            )
+            for base_chain in chains_to_extend:
+                _extend_chain(
+                    db,
+                    base_chain,
+                    link,
+                    link.destination_observation_id,
+                    current_gv,
                 )
 
-        for link in new_links:
-            if link.source_observation_id != obs.id:
-                chains_to_extend = (
-                    db.query(RouteChain)
-                    .join(RouteChainObservation)
-                    .filter(
-                        RouteChain.target_id == target_id,
-                        RouteChain.is_superseded == 0,
-                        RouteChainObservation.observation_id
-                        == link.source_observation_id,
-                    )
-                    .all()
+        if link.destination_observation_id != obs.id:
+            chains_to_extend = (
+                db.query(RouteChain)
+                .join(RouteChainObservation)
+                .filter(
+                    RouteChain.target_id == target_id,
+                    RouteChain.is_superseded == 0,
+                    RouteChainObservation.observation_id
+                    == link.destination_observation_id,
                 )
-                for base_chain in chains_to_extend:
-                    _extend_chain(
-                        db,
-                        base_chain,
-                        link,
-                        link.destination_observation_id,
-                        current_gv,
-                    )
-
-            if link.destination_observation_id != obs.id:
-                chains_to_extend = (
-                    db.query(RouteChain)
-                    .join(RouteChainObservation)
-                    .filter(
-                        RouteChain.target_id == target_id,
-                        RouteChain.is_superseded == 0,
-                        RouteChainObservation.observation_id
-                        == link.destination_observation_id,
-                    )
-                    .all()
+                .all()
+            )
+            for base_chain in chains_to_extend:
+                _extend_chain_backward(
+                    db,
+                    base_chain,
+                    link,
+                    link.source_observation_id,
+                    current_gv,
                 )
-                for base_chain in chains_to_extend:
-                    _extend_chain_backward(
-                        db,
-                        base_chain,
-                        link,
-                        link.source_observation_id,
-                        current_gv,
-                    )
 
-        db.flush()
+    db.flush()
 
-    # F15: Update LAST OBSERVED with correct ordering
+    # Update LAST OBSERVED with correct ordering
     _update_last_observed(db, target_id)
 
     _mark_processed(db, event)
@@ -449,7 +461,9 @@ def _extend_chain(
     obs_ids = [str(o.observation_id) for o in obs_seq]
     link_ids = [str(l.link_candidate_id) for l in link_seq]
 
-    if str(new_obs_id) in obs_ids:
+    # Only extend a chain from its tail; appending after some other
+    # observation would put the new link out of sequence.
+    if not obs_ids or obs_ids[-1] != str(new_link.source_observation_id) or str(new_obs_id) in obs_ids:
         return
 
     obs_ids.append(str(new_obs_id))
@@ -527,6 +541,12 @@ def _extend_chain_backward(
         .all()
     )
 
+    # Mirror of _extend_chain: only prepend in front of the chain's head.
+    if not obs_seq or str(obs_seq[0].observation_id) != str(new_link.destination_observation_id):
+        return
+    if any(str(o.observation_id) == str(new_obs_id) for o in obs_seq):
+        return
+
     obs_ids = [str(new_obs_id)] + [str(o.observation_id) for o in obs_seq]
     link_ids = [str(new_link.id)] + [str(l.link_candidate_id) for l in link_seq]
 
@@ -597,7 +617,7 @@ def process_verification_event(
 ):
     """
     Handles human review events and propagates invalidation cascades.
-    Uses atomic event claiming (F1) for idempotency.
+    Uses atomic event claiming for idempotency.
     """
     event_id = (
         f"VERIFICATION:{entity_type.value}:{entity_id}:{action.value}:{reviewer}"
@@ -670,11 +690,8 @@ def _do_process_verification(
                 # independent axes throughout the investigation model.
                 l.human_review_state = HumanReviewState.REJECTED
                 _invalidate_dependent_chains(db, l.id, target_ids_to_update)
-                _invalidate_dependent_transitions(
-                    db, l.source_observation_id, l.destination_observation_id
-                )
 
-            # F3: Invalidate chains using this observation directly.
+            # Invalidate chains using this observation directly.
             # Set status=INVALIDATED but do NOT set is_superseded.
             # is_superseded is only for chain-extension supersession, not rejection.
             chains = (
@@ -685,7 +702,7 @@ def _do_process_verification(
             )
             for c in chains:
                 c.status = RouteChainStatus.INVALIDATED
-                # F3: do NOT set c.is_superseded = 1 here
+                # do NOT set c.is_superseded = 1 here
                 target_ids_to_update.add(c.target_id)
 
     elif entity_type == EvidenceReviewEntityType.CROSS_CAMERA_LINK:
@@ -708,9 +725,6 @@ def _do_process_verification(
 
         if action == EvidenceReviewAction.REJECT:
             _invalidate_dependent_chains(db, link.id, target_ids_to_update)
-            _invalidate_dependent_transitions(
-                db, link.source_observation_id, link.destination_observation_id
-            )
 
     elif entity_type == EvidenceReviewEntityType.ROUTE_CHAIN:
         chain = db.query(RouteChain).filter_by(id=entity_id).first()
@@ -742,7 +756,7 @@ def _do_process_verification(
 
 
 # ─────────────────────────────────────────────────────────
-# Invalidation helpers (F13: bounded, dependency-aware)
+# Invalidation helpers (bounded, dependency-aware)
 # ─────────────────────────────────────────────────────────
 
 
@@ -765,36 +779,12 @@ def _invalidate_dependent_chains(
     )
     for c in chains:
         c.status = RouteChainStatus.INVALIDATED
-        # F3: do NOT set is_superseded here — that's for extension only
+        # do NOT set is_superseded here - that's for extension only
         target_ids_to_update.add(c.target_id)
 
 
-def _invalidate_dependent_transitions(
-    db: Session, source_obs_id, dest_obs_id
-):
-    """
-    Mark transitions between two observations as INELIGIBLE.
-
-    Cascade depth: O(1). Direct query on (source, destination) pair.
-    Since statistics are computed on-demand (no cache), marking the transition
-    INELIGIBLE immediately excludes it from future statistics queries.
-    """
-    transitions = (
-        db.query(CameraTransitionRecord)
-        .filter_by(
-            source_observation_id=source_obs_id,
-            destination_observation_id=dest_obs_id,
-        )
-        .limit(MAX_CASCADE_ENTITIES)
-        .all()
-    )
-    for t in transitions:
-        t.transition_status = TransitionEligibility.INELIGIBLE
-        t.exclusion_reason = "rejected_link_or_observation"
-
-
 # ─────────────────────────────────────────────────────────
-# F15: last_seen with correct ordering
+# last_seen with correct ordering
 # ─────────────────────────────────────────────────────────
 
 
@@ -802,7 +792,7 @@ def _update_last_observed(db: Session, target_id):
     """
     Update the investigation state with the most recent valid observation.
 
-    F15 fix: Uses explicit CASE WHEN for timestamp_quality ordering,
+    Uses explicit CASE WHEN for timestamp_quality ordering,
     NOT alphabetical enum sort (which would incorrectly prefer UNRELIABLE
     over VALID because 'u' > 'v' is False but PostgreSQL enum order is
     declaration order, which is unpredictable across migrations).
@@ -811,32 +801,15 @@ def _update_last_observed(db: Session, target_id):
     if not state:
         return
 
-    related_tracks = db.query(VehicleTrack).filter_by(target_id=target_id).all()
-    track_filter = [(t.camera_id, t.track_id) for t in related_tracks]
-
-    if not track_filter:
-        state.last_seen_observation_id = None
-        state.last_observation_at = None
-        return
-
-    conditions = [
-        and_(
-            VehicleObservation.camera_id == c_id,
-            VehicleObservation.track_id == t_id,
-        )
-        for c_id, t_id in track_filter
-    ]
-
-    # F15: Explicit CASE ordering — VALID=1 sorts above UNRELIABLE=0
+    # Explicit CASE ordering - VALID=1 sorts above UNRELIABLE=0
     quality_priority = case(
         (VehicleObservation.timestamp_quality == TimestampQuality.VALID, 1),
         else_=0,
     )
 
     latest_obs = (
-        db.query(VehicleObservation)
+        _target_observations(db, target_id)
         .filter(
-            or_(*conditions),
             VehicleObservation.human_review_state != HumanReviewState.REJECTED,
         )
         .order_by(quality_priority.desc(), desc(VehicleObservation.observed_at))

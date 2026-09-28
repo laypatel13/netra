@@ -1,5 +1,5 @@
 """
-Multi-frame OCR consensus — aggregate plate readings across evidence frames.
+Multi-frame OCR consensus - aggregate plate readings across evidence frames.
 
 The insight: a single OCR read on a blurry CCTV crop is unreliable.  But if
 the same plate is read (even partially) across multiple independent frames,
@@ -10,7 +10,7 @@ This module:
 2. Groups by plate candidate (normalized)
 3. Ranks by support count (how many frames agree) then by confidence
 4. Computes a consensus score reflecting agreement strength
-5. Preserves ALL candidates — never hides disagreement
+5. Preserves ALL candidates - never hides disagreement
 
 IMPORTANT: the result is an "OCR-derived candidate", not guaranteed truth.
 The system is an investigative narrowing tool, not autonomous identification.
@@ -60,14 +60,14 @@ class OCRConsensus:
 
 @dataclass
 class FrameOCRResult:
-    """OCR result from a single frame — input to consensus."""
+    """OCR result from a single frame - input to consensus."""
     frame_index: int
     plate: Optional[str]     # None if no plate found
     confidence: float        # 0 if no plate
 
 
 def _normalize_plate(plate: str) -> str:
-    """Normalize for comparison — uppercase, no spaces/dashes."""
+    """Normalize for comparison - uppercase, no spaces/dashes."""
     import re
     return re.sub(r"[^A-Z0-9]", "", plate.strip().upper())
 
@@ -170,7 +170,7 @@ def character_vote(plates: list[str]) -> Optional[str]:
 
     lengths = set(len(p) for p in plates)
     if len(lengths) != 1:
-        return None  # different lengths — can't vote character-by-character
+        return None  # different lengths - can't vote character-by-character
 
     length = lengths.pop()
     voted = []

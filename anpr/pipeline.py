@@ -1,20 +1,47 @@
 """
-ANPR pipeline — unified ingestion for CCTV streams and local video files.
+ANPR pipeline for CCTV streams and local video files.
 
-Supports two modes:
-  1. Live CCTV: Connects to camera feeds from /feeds/catalogue
-  2. Local video: --video path/to/file.mp4 (uses EXACT same pipeline path)
+Connects to camera feeds resolved by the backend's own /feeds/catalogue
+rather than re-fetching cameras.json directly - this stays consistent with
+what HlsPlayer.jsx already uses, and gets the authenticated RTSP/HLS URLs
+and the reconnect-with-backoff config for free instead of duplicating that
+logic a third time. --video runs a local file through exactly the same path.
 
-Both modes go through:
-  open_capture() → frame throttling → YOLO → tracking → feature extraction
-  → investigation target evaluation → evidence buffer → OCR → consensus
-  → scoring → /investigations/ingest → database → frontend
+Every detected vehicle is POSTed to /detections with a PTS-derived
+timestamp, never wall-clock time (PLAN.md Section 8). With --investigation,
+tracked vehicles additionally go through the multi-frame evidence path:
+tracking -> evidence buffer -> best-frame OCR -> consensus -> scoring ->
+/investigations/ingest (see investigation_pipeline.py).
 
 Usage:
-    python pipeline.py --backend http://localhost:8000 --camera-ids cam01,cam13
+    python pipeline.py --backend http://localhost:8000 --camera-ids cam01,cam13,cam15
+    python pipeline.py --backend http://localhost:8000 --camera-ids all --max-cameras 5
+    python pipeline.py --camera-ids cam01,cam02 --investigation
     python pipeline.py --video sample.mp4 --investigation --investigation-debug
-    python pipeline.py --video sample.mp4 --investigation --process-every-n 1
     python pipeline.py --dry-run --camera-ids cam01 --max-frames 200
+    python pipeline.py --camera-ids cam01 --process-every-n 3 --dedup-cooldown-s 10 --conf-threshold 0.3
+        (tuning flags - adjust these against real behavior rather than editing constants)
+
+Design notes:
+  - One thread per camera, but this is genuinely CPU-bound, not I/O-bound -
+    YOLO detection + EasyOCR on CPU is slow enough (measured: on the order
+    of hundreds of ms per processed frame) that it cannot keep up with a
+    live 15-30fps stream. FrameSampler throttles via grab()+retrieve()
+    (skip cheaply, only fully decode+process 1 in N frames) instead of
+    running detection on every single frame and falling further and further
+    behind real time. Keep --max-cameras modest for a live demo rather than
+    trying to run all 30 at once.
+  - No fixed-shape batching across cameras - each camera's frames are
+    processed independently at their own native resolution/codec/frame rate.
+  - De-duplication: the same plate - or, with no legible plate, the same
+    (vehicle_type, vehicle_color) combination - seen on consecutive frames
+    of the same camera isn't re-reported every frame, only on first sighting
+    or after a cooldown window measured in stream time (PTS), which also
+    works for --video. A PTS jump backwards (file loop, stream restart)
+    clears that state.
+  - Every detected vehicle is recorded, not just ones with a legible plate
+    (PLAN.md Section 0b) - vehicle_type + a thumbnail are always captured;
+    plate_number and vehicle_color are populated when available.
 """
 import argparse
 import logging
@@ -30,11 +57,10 @@ import requests
 from color import dominant_color
 from detector import VehicleDetector
 from plate_reader import PlateReader
-from camera_info import CameraInfo
 from frame_sampler import FrameSampler
 from motion_gate import MotionGate
 
-# Investigation modules — fail loudly if --investigation is used but modules are broken
+# Investigation modules - fail loudly if --investigation is used but modules are broken
 _INVESTIGATION_AVAILABLE = False
 try:
     from tracker import VehicleTracker
@@ -57,7 +83,7 @@ DEFAULT_DEDUP_COOLDOWN_S = 15.0
 DEFAULT_PROCESS_EVERY_N_FRAMES = 5
 DEFAULT_CONF_THRESHOLD = 0.25
 
-# Video test camera — deterministic, reused across runs
+# Video test camera - deterministic, reused across runs
 VIDEO_TEST_CAMERA_ID = "video_test"
 
 
@@ -107,15 +133,30 @@ def fetch_camera_catalogue(backend_url: str, host: Optional[str] = None) -> dict
     return resp.json()
 
 
-WARMUP_FRAMES = 15
+WARMUP_FRAMES = 15  # frames to discard after connect - decoder warnings/garbage
+                     # before the first IDR frame are normal (PLAN.md Section 8),
+                     # confirmed empirically: the very first frame read after
+                     # connect is sometimes solid-gray decode garbage.
 
 
 def open_capture(camera: dict, backend_url: str) -> Optional[cv2.VideoCapture]:
     """
-    Open a video capture for a camera. Supports both RTSP/HLS streams
-    and local video files (via the 'local_path' key in camera dict).
+    Open a capture for a camera: a local video file (the 'local_path' key,
+    set by --video) or its live streams.
+
+    Try RTSP first (best for PTS accuracy). `mp4` is None for the primary
+    cctv.corp8.cloud host (no such endpoint exists - see PLAN.md Section 8),
+    so this only reaches it for other/legacy hosts that do provide one.
+    `hls` is a backend-relative proxy path (e.g. /feeds/cam01/hls-proxy/...),
+    same as the frontend consumes - must be made absolute against
+    backend_url before cv2/ffmpeg can open it.
+
+    Discards a handful of frames right after connecting: OpenCV reports
+    `isOpened()` as soon as the RTSP handshake completes, before the decoder
+    has actually received a keyframe, so the first few reads can come back
+    as valid-looking-but-garbage frames instead of erroring.
     """
-    # Local video file — same path, no protocol negotiation needed
+    # Local video file - same path, no protocol negotiation needed
     local_path = camera.get("local_path")
     if local_path:
         cap = cv2.VideoCapture(local_path)
@@ -158,7 +199,7 @@ def post_detection(
     plate: Optional[str] = None, vehicle_type: Optional[str] = None,
     vehicle_color: Optional[str] = None,
 ) -> None:
-    """POST a detection to the backend — same for video and CCTV."""
+    """POST a detection to the backend - same for video and CCTV."""
     fields = {
         "camera_id": camera_id,
         "timestamp_ms": str(timestamp_ms),
@@ -182,7 +223,7 @@ def post_detection(
             timeout=5,
         )
         if resp.status_code == 404:
-            log.warning("Camera %s not onboarded — onboard it before running ANPR", camera_id)
+            log.warning("Camera %s not onboarded - onboard it before running ANPR", camera_id)
         else:
             resp.raise_for_status()
     except requests.RequestException as e:
@@ -206,7 +247,7 @@ def process_camera(
     frames_processed = 0
     sampler = FrameSampler(process_every_n=process_every_n)
     
-    # Investigation setup — each camera thread gets its own isolated tracker
+    # Investigation setup - each camera thread gets its own isolated tracker
     tracker = None
     inv_pipeline = None
     buffer_mgr = None
@@ -223,11 +264,11 @@ def process_camera(
     while max_frames is None or frames_processed < max_frames:
         cap = open_capture(camera, backend_url)
         if cap is None:
-            # For local video, don't retry — the file is done or broken
+            # For local video, don't retry - the file is done or broken
             if camera.get("local_path"):
                 log.info("[%s] Video file ended or failed to open", camera_id)
                 break
-            log.warning("[%s] RECONNECTING — retrying in %.0fs", camera_id, backoff)
+            log.warning("[%s] RECONNECTING - retrying in %.0fs", camera_id, backoff)
             time.sleep(backoff)
             backoff = min(backoff * backoff_cfg["multiplier"], backoff_cfg["max_ms"] / 1000.0)
             continue
@@ -252,7 +293,7 @@ def process_camera(
                         inv_pipeline.send_heartbeat()
                     log.info("[%s] Looping video file", camera_id)
                     break
-                log.warning("[%s] FRAME_TIMEOUT — reconnecting", camera_id)
+                log.warning("[%s] FRAME_TIMEOUT - reconnecting", camera_id)
                 break
 
             counters["frames_read"] = counters.get("frames_read", 0) + 1
@@ -263,8 +304,8 @@ def process_camera(
             if not ok:
                 continue
 
-            pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-            
+            pts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)  # PTS, not wall-clock - PLAN.md Section 8
+
             # --- Scene discontinuity handling ---
             if last_pts_ms >= 0 and pts_ms < last_pts_ms:
                 log.info("[%s] Scene discontinuity detected (PTS dropped from %.0f to %.0f) - clearing dedup state", camera_id, last_pts_ms, pts_ms)
@@ -280,7 +321,7 @@ def process_camera(
                 inv_pipeline.sync_targets()
                 inv_pipeline.send_heartbeat()
 
-            # --- Phase 20: Motion gate check ---
+            # --- Motion gate check ---
             motion_result = motion_gate.process(frame)
             if not motion_result.has_motion:
                 counters["frames_skipped_no_motion"] = counters.get("frames_skipped_no_motion", 0) + 1
@@ -297,7 +338,7 @@ def process_camera(
                 counters["frames_motion_roi"] = counters.get("frames_motion_roi", 0) + 1
 
             if investigation_mode and tracker:
-                # Use ByteTrack-based tracking — tracker.track() runs its own
+                # Use ByteTrack-based tracking - tracker.track() runs its own
                 # YOLO internally, so the motion gate ROI optimization doesn't
                 # apply here.  The motion gate still saves us from running the
                 # tracker on frames with zero motion.
@@ -349,7 +390,7 @@ def process_camera(
                     track_buf.add(obs)
                     counters["evidence_buffers"] = buffer_mgr.active_count
                     
-                    # Standard detection emission — only on first frame of track
+                    # Standard detection emission - only on first frame of track
                     if track_buf.frame_count > 1:
                         continue
 
@@ -423,37 +464,37 @@ def print_debug_counters(counters: dict):
 
     # Diagnostic chain
     if counters.get("vehicles_detected", 0) == 0:
-        print("  DIAGNOSIS: YOLO/video problem — no vehicles detected")
+        print("  DIAGNOSIS: YOLO/video problem - no vehicles detected")
     elif counters.get("tracks_created", 0) == 0:
-        print("  DIAGNOSIS: Tracking problem — vehicles detected but no tracks")
+        print("  DIAGNOSIS: Tracking problem - vehicles detected but no tracks")
     elif counters.get("target_evaluations", 0) == 0:
-        print("  DIAGNOSIS: Target/pipeline wiring — tracks exist but no target evaluations")
+        print("  DIAGNOSIS: Target/pipeline wiring - tracks exist but no target evaluations")
     elif counters.get("matches", 0) == 0 and counters.get("unknown_candidates", 0) == 0:
-        print("  DIAGNOSIS: Target filter problem — evaluations run but no matches/unknowns")
+        print("  DIAGNOSIS: Target filter problem - evaluations run but no matches/unknowns")
     elif counters.get("evidence_buffers", 0) == 0:
-        print("  DIAGNOSIS: Buffer problem — matches found but no evidence collected")
+        print("  DIAGNOSIS: Buffer problem - matches found but no evidence collected")
     elif counters.get("ocr_attempts", 0) == 0:
-        print("  DIAGNOSIS: Finalization/orchestration — buffers exist but no OCR ran")
+        print("  DIAGNOSIS: Finalization/orchestration - buffers exist but no OCR ran")
     elif counters.get("candidates_created", 0) == 0 and counters.get("api_posts", 0) > 0:
-        print("  DIAGNOSIS: Backend ingest problem — API posts sent but failed")
+        print("  DIAGNOSIS: Backend ingest problem - API posts sent but failed")
     elif counters.get("candidates_created", 0) == 0:
-        print("  DIAGNOSIS: Scoring/ingest — OCR ran but no candidates created")
+        print("  DIAGNOSIS: Scoring/ingest - OCR ran but no candidates created")
     elif counters.get("candidates_created", 0) > 0:
-        print("  DIAGNOSIS: Pipeline working — candidates created successfully")
+        print("  DIAGNOSIS: Pipeline working - candidates created successfully")
     print("")
 
 
 def main():
     parser = argparse.ArgumentParser(description="netra ANPR pipeline")
     parser.add_argument("--backend", default="http://localhost:8000")
-    parser.add_argument("--host", default=None, help="Camera source host")
+    parser.add_argument("--host", default=None, help="Camera source host - defaults to the backend's configured host(s)")
     parser.add_argument("--camera-ids", default="all", help="Comma-separated camera ids, or 'all'")
     parser.add_argument("--max-cameras", type=int, default=5, help="Cap concurrent camera threads")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument("--dry-run", action="store_true", help="Log detections instead of POSTing them")
+    parser.add_argument("--max-frames", type=int, default=None, help="Stop each camera after N frames (for testing)")
     parser.add_argument(
         "--video", type=str, default=None,
-        help="Path to a local MP4/AVI video file — uses exact same pipeline path as CCTV",
+        help="Path to a local MP4/AVI video file - uses exact same pipeline path as CCTV",
     )
     parser.add_argument(
         "--process-every-n", type=int, default=DEFAULT_PROCESS_EVERY_N_FRAMES,
@@ -477,7 +518,7 @@ def main():
     )
     args = parser.parse_args()
 
-    # Shared debug counters (thread-safe enough for diagnostics — int increments are atomic on CPython)
+    # Shared debug counters (thread-safe enough for diagnostics - int increments are atomic on CPython)
     debug_counters = {"cameras_active": 0}
 
     if args.video:
@@ -551,7 +592,7 @@ def main():
 
         log.info("Found %d cameras for investigation mode", len(cameras))
 
-        # PlateReader is shared (it's thread-safe — EasyOCR holds a model
+        # PlateReader is shared (it's thread-safe - EasyOCR holds a model
         # that we only call from the camera worker's result processing,
         # which is serialized per camera).
         log.info("Loading plate reader (first run downloads model weights)...")
@@ -571,7 +612,7 @@ def main():
 
         # Register signal handler for clean shutdown
         def _shutdown_handler(signum, frame):
-            log.info("Received signal %s — stopping orchestrator", signum)
+            log.info("Received signal %s - stopping orchestrator", signum)
             orchestrator.stop()
 
         signal.signal(signal.SIGINT, _shutdown_handler)
@@ -632,7 +673,7 @@ def main():
 
         # Register signal handler for clean shutdown
         def _shutdown_handler(signum, frame):
-            log.info("Received signal %s — stopping all camera workers", signum)
+            log.info("Received signal %s - stopping all camera workers", signum)
             stop_event.set()
             stop_debug.set()
 
@@ -642,7 +683,7 @@ def main():
             for t in threads:
                 t.join()
         except KeyboardInterrupt:
-            log.info("KeyboardInterrupt — workers stopping")
+            log.info("KeyboardInterrupt - workers stopping")
             stop_event.set()
 
         stop_debug.set()

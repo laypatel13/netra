@@ -46,7 +46,7 @@ class FrameSampler:
         return self._frame_count
 
     def reset(self):
-        """Reset counter — call after camera reconnect or scene cut."""
+        """Reset counter - call after camera reconnect or scene cut."""
         self._frame_count = 0
 
     @classmethod

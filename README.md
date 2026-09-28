@@ -1,269 +1,120 @@
 # Netra
 
-*Netra — "eyes" — the eyes of the police.*
+*Netra - "eyes" - the eyes of the police.*
 
-Unified CCTV registry + live viewing / ANPR / investigation platform built for the Sentinel Gujarat CCTV Integration Hackathon (Gujarat Police Innovation Challenge 2026).
+Unified CCTV registry + live viewing/ANPR platform built for the Sentinel Gujarat CCTV Integration Hackathon (Gujarat Police Innovation Challenge 2026).
 
-**One-line pitch:** Turns 26 fragmented, department-owned CCTV systems into one searchable network — pull up a vehicle's plate (or just its type and color), see every camera it passed and when, and get auto-alerted if it matches a stolen/wanted/blacklisted watchlist, without touching any department's existing infrastructure.
+**One-line pitch:** Turns 26 fragmented, department-owned CCTV systems into one searchable network - pull up a vehicle's plate (or just its type and colour), see every camera it passed and when, and get auto-alerted if it matches a stolen/wanted/blacklisted watchlist, without touching any department's existing infrastructure.
 
-Full project context, architecture, and constraints live in [`PLAN.md`](./PLAN.md). Day-by-day build schedule lives in [`TIMELINE.md`](./TIMELINE.md).
+Full project context, architecture, endpoints, tech stack, and rules of engagement live in [`PLAN.md`](./PLAN.md). Day-by-day build schedule lives in [`TIMELINE.md`](./TIMELINE.md). How the system stays read-only towards departmental VMS is in [`ARCHITECTURE.md`](./ARCHITECTURE.md). **Read `PLAN.md` before writing any code** - it has the mandatory model choice, the Sentinel sandbox protocol rules (RTSP/TCP, PTS timing, reconnect behavior), and an explicit "do not" list.
 
----
-
-## Architecture
-
-| Layer | Technology |
-|---|---|
-| Backend API | FastAPI (Python 3.14) + SQLAlchemy 2.0 |
-| Database | PostgreSQL + PostGIS (Supabase prod / local Docker dev) |
-| Frontend | React 18 + Vite + Tailwind CSS |
-| GIS Mapping | Leaflet + react-leaflet |
-| Vehicle Detection | YOLOv8 (ultralytics) |
-| Plate OCR | EasyOCR |
-| Color Extraction | OpenCV HSV histogram analysis |
-| Live Streaming | HLS.js (browser) / RTSP over TCP (pipeline) |
-| Deployment | Render (render.yaml) |
-
----
+**New to this project?** [`test/README.md`](./test/README.md) is the manual-testing and onboarding guide - what each piece does and why, how to run everything locally, and a click-through checklist for the actual UI.
 
 ## Structure
 
 ```
 netra/
-  PLAN.md                  # full project context — read first
-  TIMELINE.md              # day-by-day schedule
-  README.md                # this file
-
-  backend/                 # FastAPI + PostgreSQL/PostGIS
+  PLAN.md              # full project context - read first
+  TIMELINE.md          # day-by-day schedule
+  ARCHITECTURE.md      # non-interference architecture + data flow
+  render.yaml          # Render deployment
+  backend/             # FastAPI + PostgreSQL/PostGIS
     app/
-      main.py              # FastAPI entrypoint, CORS, static mounts
-      database.py          # SQLAlchemy engine + session factory
-      models.py            # 20+ ORM models (Camera → RouteChain)
-      schemas.py           # Pydantic request/response schemas
-      serializers.py       # Detection → read-model converters
-      dependencies.py      # RBAC helpers (get_actor, require_admin)
-      investigation_service.py   # Route-chain + cross-camera state engine
-      prediction_service.py      # ML transition prediction readiness
-      evaluation_service.py      # Dataset evaluation metrics
-      route_engine.py            # Camera graph traversal
+      main.py
+      database.py
+      models.py
+      schemas.py
+      serializers.py
+      dependencies.py            # header-based RBAC (require_admin)
+      investigation_service.py   # incremental cross-camera route engine
       routers/
-        cameras.py         # Model 1 — registry (manual/bulk/CSV)
-        feeds.py           # Model 2 — authenticated HLS proxy + RTSP catalogue
-        detections.py      # Model 2 — vehicle detections + route reconstruction
-        watchlist.py       # Watchlist CRUD + tiered alert matching
-        investigations.py  # Investigation targets, candidates, observations,
-                           #   timeline, route history, predictions, heartbeat,
-                           #   purge, recording sessions
-        investigation_ingest_schemas.py  # Pydantic schemas for pipeline → backend
-        audit.py           # Audit trail for registry actions
-        auth.py            # Demo login for deployed frontend
-    docker-compose.yml     # Local PostGIS container
-    requirements.txt       # Python dependencies
-    .env.example           # Configuration template
-    seed_investigation.py  # Seed sample investigation data
-
-  frontend/                # React + Vite + Tailwind
+        cameras.py        # Model 1 - registry, gap analysis, runtime camera health
+        feeds.py          # Model 2 - authenticated feed catalogue + HLS proxy
+        detections.py     # Model 2 - vehicle detections (plate + attributes) + route reconstruction
+        watchlist.py      # watchlist + tiered alert matching
+        investigations.py # Model 2 - investigation targets, evidence, route chains, pipeline heartbeat
+        audit.py          # audit trail
+        auth.py           # demo login for the deployed frontend
+    reset_db.py           # drop + recreate the schema after model changes (--yes)
+    docker-compose.yml
+    requirements.txt
+    .env.example
+  frontend/             # React + Leaflet
     src/
-      App.jsx              # Router + layout shell
-      main.jsx             # React DOM entry
       pages/
-        Landing.jsx        # Public marketing/overview page at /
-        Login.jsx          # Demo auth gate
-        Dashboard.jsx      # Unified control room
-        Registry.jsx       # GIS map + route-on-map visualization
-        LiveViewer.jsx     # Multi-camera HLS grid
-        Investigation.jsx  # Investigation workstation (targets, candidates,
-                           #   evidence viewer, timeline, route history,
-                           #   predictions, play/pause/delete controls)
-        Watchlist.jsx      # Watchlist management + live alert feed
-        GapAnalysis.jsx    # Coverage gap report
-        DatasetHealth.jsx  # Pipeline/dataset quality metrics
-        TypeSpecimen.jsx   # Design system specimen page
-        NotFound.jsx       # 404
-      components/
-        AppShell.jsx       # Sidebar navigation shell
-        HlsPlayer.jsx     # HLS video player with reconnect-with-backoff
-        AlertRow.jsx       # Watchlist alert display row
-        NetraLogo.jsx      # SVG logo component
-        PageHeader.jsx     # Page header wrapper
-        Reveal.jsx         # Scroll-reveal animation
-        StopList.jsx       # Route stop list
-        VehicleQueryForm.jsx  # Vehicle search form
-        ui/                # Reusable UI primitives
-          Badge.jsx, Button.jsx, Card.jsx, Feedback.jsx,
-          Field.jsx, Segmented.jsx, Stat.jsx, ThemeToggle.jsx
-      lib/
-        api.js             # Fetch wrapper for backend API
-        auth.js            # Auth state management
-        format.js          # Date/number formatters
-        theme.jsx          # Theme provider (light/dark)
-        ringTurns.js       # Animation utility
-      styles/
-        index.css          # Design tokens + Tailwind base
-
-  anpr/                    # Vehicle detection + OCR + investigation pipeline
-    pipeline.py            # Main entry — single-cam video or multi-cam CCTV
-    multi_camera.py        # Multi-camera orchestrator (shared inference queue)
-    investigation_pipeline.py  # Evidence gathering, scoring, target matching
-    detector.py            # YOLOv8 vehicle detector wrapper
-    plate_reader.py        # EasyOCR plate reader
-    color.py               # HSV-based dominant color extraction
-    quality.py             # Frame quality scoring
-    enhance.py             # Crop enhancement (CLAHE, sharpening)
-    evidence_buffer.py     # TrackBuffer / Observation / frame selection
-    scoring.py             # Evidence fusion + match tier computation
-    target_filter.py       # 3-valued logic target matching
-    ocr_consensus.py       # Multi-frame OCR consensus
-    tracker.py             # Simple centroid tracker
-    motion_gate.py         # MOG2 motion-based frame skipping
-    frame_sampler.py       # Adaptive frame sampling
-    camera_info.py         # Camera metadata + stream URL resolution
-    camera_manager.py      # Connection management + backoff
-    linking.py             # Cross-camera link candidate generation
-    requirements.txt       # Python dependencies (separate venv)
-
-  test/                    # Testing toolkit
-    README.md              # Manual testing + onboarding guide
-    smoke_test.sh          # 14-check end-to-end API health check
-    connectivity/          # Standalone feed connectivity scripts
-    seed_data/             # Representative cameras.csv + watchlist.json
-    test_*.py              # 15+ test suites (phases 8-19)
-
-  render.yaml              # Render deployment config
-  .gitignore
+        Dashboard.jsx     # unified control room
+        Registry.jsx      # GIS registry map + manual/bulk onboarding + route-on-map
+        LiveViewer.jsx    # live feed viewer
+        GapAnalysis.jsx   # coverage report
+        Watchlist.jsx     # watchlist management + live alert feed
+        Investigation.jsx # investigation workstation: targets, route, timeline, evidence review
+  anpr/                 # YOLO detection + OCR + color extraction pipeline
+    pipeline.py              # entry point: live cameras or --video, optional --investigation
+    detector.py
+    plate_reader.py
+    color.py
+    multi_camera.py          # multi-camera orchestrator with a shared inference queue
+    investigation_pipeline.py# per-track evidence -> OCR consensus -> scoring -> backend
+    tracker.py               # ByteTrack wrapper (camera-local track ids)
+    evidence_buffer.py       # per-track observation buffer + best-frame selection
+    quality.py, enhance.py   # frame quality scoring + crop enhancement
+    ocr_consensus.py         # multi-frame plate consensus
+    scoring.py, target_filter.py  # evidence fusion + 3-valued target matching
+    linking.py               # cross-camera link feasibility (used by the backend)
+    motion_gate.py, frame_sampler.py, camera_manager.py
+  test/                  # start here for manual testing - see test/README.md
+    README.md
+    connectivity/        # standalone scripts to debug feed connectivity in isolation
+    seed_data/           # representative cameras.csv + watchlist.json
+    smoke_test.sh        # scripted end-to-end API health check
+    conftest.py, test_*.py  # pytest suites (DB tests need a throwaway PostGIS, see conftest.py)
 ```
 
----
+## Day 1 quick start
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.11+ (3.14 tested)
-- Node.js 18+ and npm
-- PostgreSQL with PostGIS (or use Docker)
-
-### Backend
-
+**Backend**
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env — paste your Supabase DATABASE_URL or leave default for local Docker
-# If using Docker:  docker compose up -d
+# Edit .env - paste your Supabase DATABASE_URL (or leave as-is for local Docker)
+# If using Docker fallback:  docker compose up -d
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --reload
 ```
 
-### Frontend
-
+**Frontend**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### ANPR Pipeline
+**Validate live feed connectivity (do this first)**
+```bash
+cd test/connectivity
+pip install opencv-python requests
+python test_feed_connection.py --email you@example.com --password XXXX-XXXX-XXXX
+```
+This forces RTSP over TCP, reads timing from PTS (not wall-clock), and reconnects with backoff - matching the mandatory protocol rules in `PLAN.md` Section 8. If this script doesn't cleanly connect and hold a stream, that's the top priority to fix before building anything else.
 
-The pipeline runs in its own Python virtual environment:
+**Everything else** (seeding representative data, running the ANPR pipeline, a scripted health check, and a manual click-through checklist for the UI) is in [`test/README.md`](./test/README.md).
+
+## Investigation mode
+
+The watchlist answers "has this vehicle been seen?". Investigation mode answers the hackathon-day test case: given a plate (or a type + colour), **reconstruct the route it took across cameras, with a timestamped, location-wise history**.
 
 ```bash
 cd anpr
-python -m venv venv
-# Windows: venv\Scripts\activate  |  Linux/Mac: source venv/bin/activate
-pip install -r requirements.txt
+python pipeline.py --camera-ids cam01,cam02,cam04 --investigation   # live sandbox feeds
+python pipeline.py --video sample.mp4 --investigation                # local file, same code path
 ```
 
-**Investigation mode (multi-camera, live CCTV):**
-```bash
-python pipeline.py --investigation
-```
+Create a target on the Investigation page, then:
 
-**Local video testing:**
-```bash
-python pipeline.py --video sample.mp4 --investigation
-```
+1. The pipeline tracks each vehicle per camera and buffers several frames of it instead of reading one frame.
+2. When a tracked vehicle could match an active target, the best frames are enhanced and OCR'd, the reads are combined into one consensus plate, and the evidence is scored into a match tier (`exact_plate`, `strong_candidate`, `attribute_candidate`).
+3. The candidate and its evidence crops go to `/investigations/ingest`; a per-camera observation goes to `/investigations/observations`.
+4. The backend links the new observation to the target's earlier sightings on other cameras. A link counts only if the travel time is physically possible: at most 120 km/h between the cameras' registered map locations, or within a configured camera-graph edge. Valid links extend a route chain.
+5. The Investigation page shows the reconstructed route, a timeline and every evidence frame. An operator can verify or reject each candidate, and a rejection invalidates any route built on it.
 
-**Standard single-camera ANPR (non-investigation):**
-```bash
-python pipeline.py
-```
-
----
-
-## Key Features
-
-### Model 1 — Centralised CCTV Registry & GIS
-- Camera onboarding (manual, bulk JSON, bulk CSV)
-- Interactive GIS map with department/status filters
-- Gap-analysis report (coverage, stale cameras, missing departments)
-- RBAC (admin/department/viewer) + audit trail
-
-### Model 2 — Unified Viewing & Analytics
-- Live multi-camera HLS grid with reconnect-with-backoff
-- Real-time ANPR (YOLOv8 + EasyOCR)
-- Vehicle attribute tracking (type + color + thumbnail)
-- Watchlist with tiered matching (exact plate → attribute-based)
-- Cross-camera route reconstruction on GIS map
-
-### Investigation Pipeline (Phase 2)
-- Multi-camera investigation targets with play/pause/delete
-- Multi-frame evidence buffering and quality-ranked frame selection
-- OCR consensus across multiple observations
-- Evidence fusion scoring with match tier classification
-- Cross-camera route chain reconstruction
-- Pipeline heartbeat monitoring
-- Predictive transition analysis
-- Full investigation workstation UI
-
----
-
-## Environment Variables
-
-See [`backend/.env.example`](./backend/.env.example) for all configuration options:
-
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `CCTV_HOST` | Sentinel camera CDN host |
-| `CCTV_DIRECT_IP` | RTSP/WebRTC direct IP |
-| `CCTV_EMAIL` | Sentinel portal credentials |
-| `CCTV_PASSWORD` | Sentinel access password |
-| `CORS_ORIGINS` | Allowed frontend origins |
-| `DEMO_EMAIL` / `DEMO_PASSWORD` | Judge login credentials |
-
----
-
-## API Documentation
-
-With the backend running, visit:
-- **Swagger UI:** http://localhost:8000/docs
-- **ReDoc:** http://localhost:8000/redoc
-
----
-
-## Testing
-
-```bash
-# API smoke test (requires backend running)
-cd test && bash smoke_test.sh
-
-# Python unit tests
-cd test && python -m pytest test_*.py -v
-
-# ANPR pipeline tests
-cd anpr && python -m pytest test_*.py -v
-```
-
-See [`test/README.md`](./test/README.md) for the full manual-testing and onboarding guide.
-
----
-
-## Deployment
-
-Render deployment is pre-configured via [`render.yaml`](./render.yaml). Set the environment variables in the Render dashboard and deploy.
-
----
-
-## License
-
-MIT
+Observation times are the wall-clock time the vehicle was last seen, because per-stream PTS starts near zero on every connection and can't order sightings across cameras (same reasoning as `detections.py`'s use of `created_at`).

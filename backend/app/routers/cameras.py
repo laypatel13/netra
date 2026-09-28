@@ -7,6 +7,7 @@ invent camera IDs that don't correspond to something in the catalogue.
 """
 import csv
 import io
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import requests
@@ -385,8 +386,6 @@ def gap_analysis(db: Session = Depends(get_db)):
 )
 def get_cameras_health(db: Session = Depends(get_db)):
     """
-    Phase 1 camera health endpoint.
-
     Returns real runtime health based on pipeline heartbeat data.
     A camera is only ONLINE when the pipeline worker is actively receiving frames.
     A camera with an active DB configuration but a dead pipeline process shows as OFFLINE.
@@ -397,11 +396,8 @@ def get_cameras_health(db: Session = Depends(get_db)):
       - RECONNECTING: lost connection, retrying with backoff
       - OFFLINE: not connected (worker stopped, error, or pipeline not running)
     """
-    from datetime import timedelta
-
     heartbeat_timeout = timedelta(seconds=15)
-    cutoff = models.PipelineHeartbeat.__table__.c.last_heartbeat
-    now_utc = __import__("datetime").datetime.utcnow()
+    now_utc = datetime.utcnow()
 
     recent = (
         db.query(models.PipelineHeartbeat)

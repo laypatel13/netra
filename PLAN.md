@@ -377,33 +377,24 @@ See `TIMELINE.md` for the day-by-day execution schedule.
 
 ---
 
-## 14. Phase 2 - Investigation Pipeline Architecture (Sep 15-22)
+## 14. Investigation pipeline
 
-Built for the Phase 2 Production Demo (Sep 22-23). Extends Model 2 with a full multi-camera investigation system.
+Extends Model 2 for the hackathon-day test case (FAQ 27-28): a designated plate must be tracked across cameras, with the complete route and a timestamped, location-wise movement history as output. `README.md` ("Investigation mode") walks through the data flow.
 
-### 0h. Investigation Pipeline - what was built
+| Component | File(s) |
+|---|---|
+| Multi-camera orchestrator | anpr/multi_camera.py - shared inference queue, per-camera workers |
+| Per-track evidence path | anpr/investigation_pipeline.py, evidence_buffer.py, quality.py, enhance.py |
+| OCR consensus + scoring | anpr/ocr_consensus.py, scoring.py, target_filter.py |
+| Frame budget | anpr/motion_gate.py (MOG2), frame_sampler.py |
+| Camera connection state | anpr/camera_manager.py |
+| Cross-camera link feasibility | anpr/linking.py (called by the backend) |
+| Route engine | backend/app/investigation_service.py |
+| API | backend/app/routers/investigations.py |
+| Workstation UI | frontend/src/pages/Investigation.jsx |
 
-| Component | File(s) | Status |
-|---|---|---|
-| Multi-camera orchestrator | anpr/multi_camera.py | Done - shared inference queue, per-camera workers |
-| Investigation pipeline | anpr/investigation_pipeline.py | Done - evidence buffering, scoring, target matching |
-| Evidence buffer | anpr/evidence_buffer.py | Done - TrackBuffer, Observation, frame selection |
-| Evidence scoring | anpr/scoring.py | Done - evidence fusion, match tier classification |
-| Target filter | anpr/target_filter.py | Done - 3-valued logic matching |
-| OCR consensus | anpr/ocr_consensus.py | Done - multi-frame plate consensus |
-| Motion gate | anpr/motion_gate.py | Done - MOG2-based frame skipping |
-| Camera manager | anpr/camera_manager.py | Done - connection state machine, backoff |
-| Investigation service | backend/app/investigation_service.py | Done - route-chain construction |
-| Prediction service | backend/app/prediction_service.py | Done - transition dataset readiness |
-| Route engine | backend/app/route_engine.py | Done - camera graph traversal |
-| Investigation UI | frontend/src/pages/Investigation.jsx | Done - full workstation |
+**Timing across cameras.** Observations carry the wall-clock time the vehicle was last seen. Per-stream PTS is still captured for provenance, but it restarts near zero on every connection and can't order sightings on different cameras - same reasoning as `detections.py`'s use of `created_at` (Section 8).
 
-### Data model additions (Phase 2)
+**When two sightings link.** Same target (via each observation's candidate track), different cameras, no contradicting attributes, and a gap that fits the travel-time bounds: a configured `CameraGraphEdge` if one exists, otherwise straight-line distance between the cameras' registered locations at 120 km/h as the minimum and the 2-hour search window as the maximum. A camera with no location gives "unknown" timing and never extends a route.
 
-New models in backend/app/models.py: InvestigationTarget, VehicleTrack, TrackEvidence, VehicleObservation, RecordingSession, CameraGraphEdge, CrossCameraLinkCandidate, RouteChain, RouteChainObservation, RouteChainLink, InvestigationState, EvidenceReview, GraphVersion, PipelineHeartbeat, InvestigationEvent, CameraTransitionRecord.
-
-### Running the investigation pipeline
-
-    # Multi-camera (live CCTV):  python pipeline.py --investigation
-    # Video testing:             python pipeline.py --video sample.mp4 --investigation
-    # With debug counters:       python pipeline.py --investigation --investigation-debug
+**Data model.** InvestigationTarget, VehicleTrack, TrackEvidence, VehicleObservation, CameraGraphEdge, CrossCameraLinkCandidate, RouteChain (+ RouteChainObservation, RouteChainLink), InvestigationState, EvidenceReview, GraphVersion, PipelineHeartbeat, InvestigationEvent. New tables only; existing tables are unchanged, so `create_all()` picks them up on an existing database.

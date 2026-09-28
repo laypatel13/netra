@@ -1,16 +1,16 @@
 """
-Evidence fusion scoring — transparent, configurable, explainable.
+Evidence fusion scoring - transparent, configurable, explainable.
 
 Combines plate match, OCR consensus, vehicle type/color match, image quality,
 and temporal consistency into a single candidate score with full breakdown.
 
 All weights are module-level constants, easily changed.  The API returns
-component scores alongside the final score — nothing is hidden inside an
+component scores alongside the final score - nothing is hidden inside an
 opaque model.
 
 CRITICAL: uses conditional weighted scoring.  Only signals where real
 evidence exists contribute to the score.  Missing OCR does not penalize a
-candidate — instead, evidence_completeness tells the operator how much of
+candidate - instead, evidence_completeness tells the operator how much of
 the expected evidence is actually available.
 
 Match tiers:
@@ -22,7 +22,7 @@ Match tiers:
 IMPORTANT: even EXACT_PLATE is phrased as a system match, not legal identity
 confirmation.  Human verification is always required.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
@@ -48,9 +48,9 @@ class MatchTier(str, Enum):
 
 # Human-readable tier labels for the UI
 TIER_LABELS = {
-    MatchTier.EXACT_PLATE: "Plate match — human verification required",
-    MatchTier.STRONG_CANDIDATE: "High-confidence candidate — human verification required",
-    MatchTier.ATTRIBUTE_CANDIDATE: "Potential vehicle — description-based narrowing only",
+    MatchTier.EXACT_PLATE: "Plate match - human verification required",
+    MatchTier.STRONG_CANDIDATE: "High-confidence candidate - human verification required",
+    MatchTier.ATTRIBUTE_CANDIDATE: "Potential vehicle - description-based narrowing only",
     MatchTier.NO_MATCH: "No match",
 }
 
@@ -112,7 +112,7 @@ def _plate_signal(
     Returns (plate_score, ocr_score).
     """
     if not target_plate:
-        # No target plate specified — these signals don't apply
+        # No target plate specified - these signals don't apply
         return 0.0, ocr_consensus_score
 
     if not ocr_best_plate:
@@ -127,7 +127,7 @@ def _plate_signal(
     if t == o:
         return 1.0, ocr_consensus_score
 
-    # Partial match — count matching characters
+    # Partial match - count matching characters
     if len(t) == len(o) and len(t) > 0:
         matching = sum(1 for a, b in zip(t, o) if a == b)
         partial = matching / len(t)
@@ -140,9 +140,9 @@ def _type_signal(
     target_type: Optional[str],
     detected_type: Optional[str],
 ) -> float:
-    """Vehicle type match — 1.0 for match, 0.0 for mismatch, 0.5 for unknown."""
+    """Vehicle type match - 1.0 for match, 0.0 for mismatch, 0.5 for unknown."""
     if not target_type or not detected_type:
-        return 0.5  # unknown — neutral
+        return 0.5  # unknown - neutral
     if target_type.strip().lower() == detected_type.strip().lower():
         return 1.0
     return 0.0
@@ -152,7 +152,7 @@ def _color_signal(
     target_color: Optional[str],
     detected_color: Optional[str],
 ) -> float:
-    """Vehicle color match — 1.0 for match, 0.8 for family match, 0.0 for mismatch, 0.5 for unknown."""
+    """Vehicle color match - 1.0 for match, 0.8 for family match, 0.0 for mismatch, 0.5 for unknown."""
     if not target_color or not detected_color:
         return 0.5
         
@@ -181,7 +181,7 @@ def _temporal_consistency_signal(
     ocr_readings: Optional[list[Optional[str]]] = None,
 ) -> float:
     """
-    Measure actual attribute consistency across observations — NOT frame count.
+    Measure actual attribute consistency across observations - NOT frame count.
 
     A vehicle appearing for 20 frames does not automatically mean stronger match.
     Instead, measure whether type/color/OCR readings are consistent across frames.
@@ -360,7 +360,7 @@ def compute_evidence_score(
         
     if not has_type_contradiction and not has_color_contradiction:
         if plate_score >= 0.95 and target_plate:
-            explanations.append(f"Plate '{ocr_best_plate}' matches target — human verification required")
+            explanations.append(f"Plate '{ocr_best_plate}' matches target - human verification required")
         elif plate_score > 0 and target_plate:
             explanations.append(f"Partial plate match ({plate_score:.0%})")
         if type_score == 1.0:

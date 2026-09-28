@@ -117,66 +117,41 @@ See `PLAN.md` for full technical detail, endpoints, schemas, current status, and
 
 ---
 
-## Phase 2 (Sep 15-22) - Investigation Pipeline + Production Demo
+## Investigation pipeline
 
-**We were shortlisted after Phase 1.** Phase 2 is a live demo on Sep 22-23 against production-scale camera feeds.
+Note: the organisers have since extended the submission deadline to Sep 28, with the hackathon event on Oct 12-13 (sentinel.gujarat.gov.in).
 
-### What was built for Phase 2
+Built for the hackathon-day test case (FAQ 27-28): track a given plate across cameras and output its complete, timestamped, location-wise route.
 
-- **Multi-camera investigation pipeline** (npr/multi_camera.py, npr/investigation_pipeline.py)
-  - Shared inference queue architecture across all cameras
-  - Per-camera worker threads with connection state machine + exponential backoff
-  - Evidence buffering per tracked vehicle (TrackBuffer + Observation model)
-  - Quality-ranked best-frame selection with temporal diversity
-  - Multi-frame OCR consensus engine
-  - Evidence fusion scoring with match tier classification
-  - 3-valued target filtering logic (type, color, plate matching)
-  - MOG2 motion-gated frame skipping
+What was added:
 
-- **Backend investigation engine** (ackend/app/routers/investigations.py + services)
-  - 20+ API routes for targets, candidates, observations, timeline, route history, predictions
-  - Cross-camera route chain construction with graph-versioned temporal feasibility
-  - Transition recording for ML prediction readiness
-  - Pipeline heartbeat monitoring with per-camera health tracking
-  - Cascading target deletion with safe foreign-key handling
-  - Investigation purge endpoint
+- **ANPR side** (`anpr/multi_camera.py`, `anpr/investigation_pipeline.py`): shared inference queue across cameras, per-camera workers with a connection state machine and backoff, per-vehicle tracking, multi-frame evidence buffering with quality-ranked frame selection, crop enhancement, multi-frame OCR consensus, evidence scoring into match tiers, and MOG2 motion gating to skip empty frames.
+- **Backend** (`backend/app/routers/investigations.py`, `backend/app/investigation_service.py`): targets, candidates with evidence frames, per-camera observations, and an incremental engine that links observations across cameras and grows route chains. Operator review (verify/reject) is append-only and a rejection invalidates dependent routes. Pipeline heartbeats feed per-camera health (`/cameras/health`).
+- **Frontend** (`Investigation.jsx`): target management, reconstructed route, timeline, evidence viewer with score breakdown, and candidate review.
 
-- **Investigation workstation UI** (rontend/src/pages/Investigation.jsx)
-  - Create/pause/resume/delete investigation targets
-  - Real-time candidate feed (5s polling)
-  - Evidence frame viewer with quality scores and OCR results
-  - Score breakdown visualization per candidate
-  - Timeline and route history panels
-  - Predictive analysis panel
-  - Candidate verification (approve/reject with notes)
+Fixed during review, before merge:
 
-- **16 new database models** in ackend/app/models.py:
-  InvestigationTarget, VehicleTrack, TrackEvidence, VehicleObservation,
-  RecordingSession, CameraGraphEdge, CrossCameraLinkCandidate, RouteChain,
-  RouteChainObservation, RouteChainLink, InvestigationState, EvidenceReview,
-  GraphVersion, PipelineHeartbeat, InvestigationEvent, CameraTransitionRecord
+- Cross-camera links required a hand-configured camera-graph edge that nothing in the product creates, so real sightings never formed a route. Links now fall back to the cameras' registered coordinates (at most 120 km/h between them).
+- Observations were timestamped from per-stream PTS, which rendered as 1970 dates and can't order sightings across cameras. They now carry the wall-clock time the vehicle was last seen.
+- Observations were matched to targets by camera-local track number, which repeats every session; they now go through their candidate track.
+- `/investigations/pipeline-status` crashed whenever a pipeline was online; unauthenticated purge/delete endpoints now require `X-Role: admin`; deleting a target can no longer delete files outside `backend/data/evidence`.
+- A prediction/"dataset readiness" subsystem that only ever produced output from synthetic seed data was removed.
 
-### Bugs fixed during Phase 2
-
-- **Heartbeat 500 error**: Pipeline heartbeat route referenced a stats column that did not exist on the PipelineHeartbeat model. Removed the phantom field reference.
-- **Target deletion 500 error**: Deleting an investigation target with evidence tried to hard-delete VehicleObservation records, violating foreign-key constraints from cross-camera links. Fixed to unlink (set candidate_id=NULL) instead of delete.
-- **Missing purge endpoint**: Frontend Clear Data button called /investigations/purge which did not exist. Implemented the full cascading purge route.
-- **Pipeline not detecting**: Backend going down caused the pipeline to lose its target list. Target sync now gracefully handles backend unavailability and retries.
-
-### How to run everything (Phase 2)
+### How to run it
 
 Terminal 1 - Backend:
+
     cd backend
-    python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    uvicorn app.main:app --reload
 
 Terminal 2 - Frontend:
+
     cd frontend
     npm run dev
 
-Terminal 3 - Pipeline (live CCTV investigation mode):
-    cd anpr
-    python pipeline.py --investigation
+Terminal 3 - Pipeline:
 
-Terminal 3 alt - Pipeline (video testing):
     cd anpr
+    python pipeline.py --camera-ids cam01,cam02,cam04 --investigation
+    # or, against a local file:
     python pipeline.py --video sample.mp4 --investigation

@@ -1,5 +1,5 @@
 """
-NETRA Phase 1  --  Acceptance Tests.
+Pipeline acceptance tests.
 
 Tests the foundational CCTV ingestion layer without requiring a running backend,
 live CCTV streams, or GPU. Uses local video files and mock/synthetic sources.

@@ -3,7 +3,7 @@ Lightweight vehicle tracker using Ultralytics' built-in ByteTrack/BOT-SORT.
 
 Wraps the existing VehicleDetector's YOLO model to produce tracked detections
 with camera-local, session-local track IDs. Track IDs are temporary bookkeeping
-for grouping consecutive-frame observations of the same physical vehicle — they
+for grouping consecutive-frame observations of the same physical vehicle - they
 are NEVER persisted as vehicle identities.
 
 Usage:
@@ -16,11 +16,10 @@ Falls back to per-frame detection (track_id=-1) if tracking fails for any
 reason, so the pipeline never crashes because the tracker broke.
 """
 from dataclasses import dataclass
-from typing import Optional
 
 from ultralytics import YOLO
 
-# COCO class ids for vehicle types — same as detector.py
+# COCO class ids for vehicle types - same as detector.py
 VEHICLE_CLASS_IDS = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
 # Configurable tracking parameters
@@ -32,7 +31,7 @@ TRACK_CONF_THRESHOLD = 0.25     # minimum confidence for tracking
 @dataclass
 class TrackedVehicle:
     """A single tracked vehicle detection in one frame."""
-    track_id: int           # camera-local, session-local — NOT a persistent identity
+    track_id: int           # camera-local, session-local - NOT a persistent identity
     x1: int
     y1: int
     x2: int
@@ -47,7 +46,7 @@ class VehicleTracker:
 
     Each call to track() feeds the next frame and returns all currently-tracked
     vehicles with their assigned track IDs.  The tracker maintains internal
-    state across calls — call reset() when switching cameras or after a
+    state across calls - call reset() when switching cameras or after a
     reconnect to clear stale state.
     """
 
@@ -182,7 +181,7 @@ class VehicleTracker:
         return inter / (area_a + area_b - inter)
 
     def _parse_tracked_results(self, results) -> list[TrackedVehicle]:
-        """Parse results from model.track() — boxes have .id for track IDs."""
+        """Parse results from model.track() - boxes have .id for track IDs."""
         vehicles = []
         for r in results:
             if r.boxes is None:
@@ -205,7 +204,7 @@ class VehicleTracker:
         return vehicles
 
     def _parse_untracked_results(self, results) -> list[TrackedVehicle]:
-        """Parse results from model.predict() — no track IDs available."""
+        """Parse results from model.predict() - no track IDs available."""
         vehicles = []
         for r in results:
             if r.boxes is None:
@@ -225,7 +224,7 @@ class VehicleTracker:
         return vehicles
 
     def reset(self):
-        """Clear tracker state — call after camera reconnect or scene cut."""
+        """Clear tracker state - call after camera reconnect or scene cut."""
         self.model.predictor = None
         self._fallback_mode = False
         self._fallback_tracks.clear()

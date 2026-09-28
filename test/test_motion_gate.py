@@ -1,17 +1,16 @@
 """
-Tests for Phase 20 — MotionGate.
+Tests for MotionGate.
 
 Validates the motion detection gate that filters frames before YOLO inference.
 """
 import sys
 import os
 import numpy as np
-import pytest
 
 # Allow imports from the anpr directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "anpr"))
 
-from motion_gate import MotionGate, MotionResult, MotionROI
+from motion_gate import MotionGate, MotionROI
 
 
 def _make_frame(h=480, w=640, color=(128, 128, 128)):

@@ -12,20 +12,17 @@ Running OCR on the full frame instead of a vehicle crop mostly finds noise
 (signage, shopfronts, banners) - cropping to vehicles first is what keeps
 false positives down before the expensive OCR step even runs.
 
-Phase 20: Added detect_rois() for motion-gated ROI detection and two-tier
-model support (yolov8n for ROI, yolov8s for full-frame sweeps).
+detect_rois() runs detection on motion regions only, for the motion-gated
+path in multi_camera.py; full-frame sweeps use the larger default model.
 """
 from dataclasses import dataclass
-from typing import Optional
-
-import cv2
 import numpy as np
 from ultralytics import YOLO
 
 # COCO class ids for the vehicle types we care about.
 VEHICLE_CLASS_IDS = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# Minimum ROI dimensions (pixels) — ROIs smaller than this are ignored
+# Minimum ROI dimensions (pixels) - ROIs smaller than this are ignored
 # because YOLO can't reliably detect vehicles at tiny scales.
 MIN_ROI_DIM = 64
 
@@ -49,7 +46,7 @@ class VehicleDetector:
 
     def detect(self, frame) -> list[VehicleBox]:
         """
-        Full-frame detection.  No fixed input shape assumed — ultralytics
+        Full-frame detection.  No fixed input shape assumed - ultralytics
         handles per-frame resizing internally, so mixed resolutions across
         cameras (PLAN.md Section 8) don't need special-casing here.
         """

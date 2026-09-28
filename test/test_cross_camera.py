@@ -1,16 +1,14 @@
 """
-Tests for Phase 4 Cross-Camera Linking Engine.
+Cross-camera linking (anpr/linking.py): travel-time feasibility and
+attribute comparison between two observations.
 """
 from datetime import datetime, timedelta
-import pytest
 import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 from app.models import (
     VehicleObservation,
-    CameraGraphEdge,
-    VehicleType,
     TimestampSource,
     TimestampQuality,
 )
@@ -20,27 +18,27 @@ from linking import evaluate_temporal_feasibility, compare_observations
 
 
 def test_temporal_feasibility_valid():
-    edge = CameraGraphEdge(min_travel_time=30.0, max_travel_time=120.0)
+    bounds = (30.0, 120.0)
     
     t1 = datetime(2023, 1, 1, 12, 0, 0)
     obs_a = VehicleObservation(observed_at=t1, timestamp_source=TimestampSource.ABSOLUTE_TIMESTAMP, timestamp_quality=TimestampQuality.VALID)
     obs_b = VehicleObservation(observed_at=t1 + timedelta(seconds=60), timestamp_source=TimestampSource.ABSOLUTE_TIMESTAMP, timestamp_quality=TimestampQuality.VALID)
     
-    assert evaluate_temporal_feasibility(obs_a, obs_b, edge) == "valid"
+    assert evaluate_temporal_feasibility(obs_a, obs_b, bounds) == "valid"
 
 
 def test_temporal_feasibility_impossible_too_fast():
-    edge = CameraGraphEdge(min_travel_time=30.0, max_travel_time=120.0)
+    bounds = (30.0, 120.0)
     
     t1 = datetime(2023, 1, 1, 12, 0, 0)
     obs_a = VehicleObservation(observed_at=t1, timestamp_source=TimestampSource.ABSOLUTE_TIMESTAMP, timestamp_quality=TimestampQuality.VALID)
     obs_b = VehicleObservation(observed_at=t1 + timedelta(seconds=10), timestamp_source=TimestampSource.ABSOLUTE_TIMESTAMP, timestamp_quality=TimestampQuality.VALID)
     
-    assert evaluate_temporal_feasibility(obs_a, obs_b, edge) == "impossible"
+    assert evaluate_temporal_feasibility(obs_a, obs_b, bounds) == "impossible"
 
 
 def test_compare_observations_possible():
-    edge = CameraGraphEdge(min_travel_time=30.0, max_travel_time=120.0)
+    bounds = (30.0, 120.0)
     
     t1 = datetime(2023, 1, 1, 12, 0, 0)
     obs_a = VehicleObservation(
@@ -60,7 +58,7 @@ def test_compare_observations_possible():
         timestamp_quality=TimestampQuality.VALID,
     )
     
-    res = compare_observations(obs_a, obs_b, edge)
+    res = compare_observations(obs_a, obs_b, bounds)
     assert res.temporal_feasibility == "valid"
     assert res.status == "possible"
     assert res.attribute_comparisons["type"] == "match"
@@ -69,7 +67,7 @@ def test_compare_observations_possible():
     
 
 def test_compare_observations_conflicting():
-    edge = CameraGraphEdge(min_travel_time=30.0, max_travel_time=120.0)
+    bounds = (30.0, 120.0)
     
     t1 = datetime(2023, 1, 1, 12, 0, 0)
     obs_a = VehicleObservation(
@@ -89,13 +87,13 @@ def test_compare_observations_conflicting():
         timestamp_quality=TimestampQuality.VALID,
     )
     
-    res = compare_observations(obs_a, obs_b, edge)
+    res = compare_observations(obs_a, obs_b, bounds)
     assert res.status == "conflicting"
     assert res.link_score == 0.0
 
 
 def test_compare_observations_unknown_plate():
-    edge = CameraGraphEdge(min_travel_time=30.0, max_travel_time=120.0)
+    bounds = (30.0, 120.0)
     
     t1 = datetime(2023, 1, 1, 12, 0, 0)
     obs_a = VehicleObservation(
@@ -115,5 +113,5 @@ def test_compare_observations_unknown_plate():
         timestamp_quality=TimestampQuality.VALID,
     )
     
-    res = compare_observations(obs_a, obs_b, edge)
+    res = compare_observations(obs_a, obs_b, bounds)
     assert res.status == "possible" # partial match without plate but no contradictions

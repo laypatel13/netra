@@ -6,7 +6,7 @@ performs a fast attribute-compatibility check to decide whether a detected
 vehicle is worth investigating further.
 
 Uses a three-valued logic (MATCH / NON_MATCH / UNKNOWN) rather than forcing
-binary decisions — a vehicle with an uncertain color is not discarded, it's
+binary decisions - a vehicle with an uncertain color is not discarded, it's
 marked UNKNOWN and still enters the investigation pipeline.  Only vehicles
 with a clear NON_MATCH on a non-nullable target attribute are rejected.
 """
@@ -31,7 +31,7 @@ class FilterResult:
     detail: str = ""
 
 def _normalize_color(color: Optional[str]) -> Optional[str]:
-    """Normalize color for comparison — lowercase, stripped."""
+    """Normalize color for comparison - lowercase, stripped."""
     if not color:
         return None
     c = color.strip().lower()
@@ -49,7 +49,7 @@ def _normalize_type(vtype: Optional[str]) -> Optional[str]:
     return t
 
 def _normalize_plate(plate: Optional[str]) -> Optional[str]:
-    """Normalize plate for comparison — uppercase, no spaces/dashes."""
+    """Normalize plate for comparison - uppercase, no spaces/dashes."""
     if not plate:
         return None
     import re
@@ -134,7 +134,7 @@ def filter_candidate(
             detail="Plate mismatch",
         )
 
-    # Check attribute compatibility — reject ONLY on clear non-match.
+    # Check attribute compatibility - reject ONLY on clear non-match.
     # UNKNOWN + Required is NOT a non-match; it's insufficient evidence (handled by scoring layer).
     non_matches = []
     

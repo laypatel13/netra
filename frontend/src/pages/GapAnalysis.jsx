@@ -41,8 +41,7 @@ export default function GapAnalysis() {
       setSyncMessage(`Updated ${res.cameras_updated}, skipped ${res.cameras_skipped_no_live_field}`);
       load();
     } catch (err) {
-      console.error(err);
-      setSyncMessage("Sync failed");
+      setSyncMessage(`Sync failed: ${err.message}`);
     } finally {
       setSyncing(false);
     }

@@ -7,7 +7,7 @@ OCR consensus, scores the candidate, and submits to the backend.
 
 IMPORTANT: UNKNOWN observations continue collecting evidence.
 The whole point of investigation mode is to resolve UNKNOWN observations
-using later frames — never discard a track just because early frames
+using later frames - never discard a track just because early frames
 are inconclusive.
 """
 import logging
@@ -19,9 +19,7 @@ from typing import Optional
 import cv2
 import requests
 
-from tracker import TrackedVehicle
-from quality import compute_quality
-from evidence_buffer import TrackBuffer, Observation, select_best_frames
+from evidence_buffer import TrackBuffer, select_best_frames
 from target_filter import filter_candidate
 from enhance import enhance_crop, ENABLE_ENHANCEMENT
 from ocr_consensus import compute_consensus, FrameOCRResult
@@ -51,9 +49,13 @@ class InvestigationPipeline:
         # a new local ``track_id=7`` with a previous physical vehicle.
         self.session_id = session_id or str(uuid.uuid4())
         
-        # Ensure evidence directory exists (save to backend's data dir so it can serve them)
+        # Evidence crops go straight into the backend's data dir so its
+        # /data/evidence static mount can serve them. Resolved from this file,
+        # not the working directory, so the pipeline can be launched from anywhere.
         self.db_evidence_dir = os.path.join("data", "evidence", self.camera_id)
-        self.fs_evidence_dir = os.path.join("..", "backend", "data", "evidence", self.camera_id)
+        self.fs_evidence_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "backend", "data", "evidence", self.camera_id
+        )
         os.makedirs(self.fs_evidence_dir, exist_ok=True)
 
     def sync_targets(self):
@@ -90,7 +92,6 @@ class InvestigationPipeline:
                 "ocr_attempts": self.debug_counters.get("ocr_attempts", 0),
                 "ocr_success": self.debug_counters.get("ocr_success", 0),
                 "api_failures": self.debug_counters.get("api_failures", 0),
-                "stats": {k: v for k, v in self.debug_counters.items() if k != "per_camera"},
                 "per_camera": self.debug_counters.get("per_camera"),
             }
             requests.post(
@@ -125,14 +126,14 @@ class InvestigationPipeline:
         
         pts_start = first_obs.pts_ms if first_obs else 0.0
         pts_end = last_obs.pts_ms if last_obs else 0.0
-        # We now use PTS as the primary chronological marker for the observation (Source Time)
-        # Ingestion time (wall-clock) is passed explicitly as ingested_at
-        timestamp_source = "source_pts"
-        
-        # Assuming the camera started at 1970 UTC for pure relative PTS.
-        # This keeps observed_at comparable only within the same stream/session, which is correct!
-        observed_at = pts_end / 1000.0 
-        
+        # PTS is kept for within-stream provenance, but it is not a shared clock
+        # across independent camera connections (each starts near zero), so it
+        # can't order sightings on different cameras. The wall-clock time we last
+        # saw the vehicle is - the same reasoning as detections' created_at, see
+        # backend/app/routers/detections.py.
+        timestamp_source = "absolute_timestamp"
+        observed_at = buffer.last_seen_at
+
         obs_payload = {
             "camera_id": self.camera_id,
             "session_id": self.session_id,
@@ -145,7 +146,7 @@ class InvestigationPipeline:
             "candidate_id": candidate_id,
             "source_pts_start": pts_start,
             "source_pts_end": pts_end,
-            "vehicle_type": dom_type if dom_type else "unknown",
+            "vehicle_type": dom_type or None,
             "color": dom_color_consensus.dominant_color,
             "color_confidence": dom_color_consensus.confidence,
             "plate": plate_text,
@@ -175,7 +176,7 @@ class InvestigationPipeline:
             self._ingest_observation(buffer)
             return  # No active investigations
 
-        # Fast filter against targets — UNKNOWN continues collecting
+        # Fast filter against targets - UNKNOWN continues collecting
         matched_targets = []
         for target in self.targets:
             res = filter_candidate(
@@ -273,7 +274,7 @@ class InvestigationPipeline:
         best_plate = consensus.best_plate
         ocr_readings = [r.plate for r in ocr_results]
         
-        # Re-filter targets with OCR results — but UNKNOWN still passes
+        # Re-filter targets with OCR results - but UNKNOWN still passes
         final_targets = []
         for target in matched_targets:
             res = filter_candidate(

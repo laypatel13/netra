@@ -5,7 +5,7 @@ Creates a simple video with moving colored rectangles (simulating vehicles)
 that YOLO can detect. This validates the full pipeline wiring:
   video → YOLO → tracking → target evaluation → evidence → backend → frontend
 
-This does NOT validate real OCR — use a real traffic MP4 for that.
+This does NOT validate real OCR - use a real traffic MP4 for that.
 
 Usage:
     python generate_test_video.py
@@ -37,7 +37,7 @@ def generate_test_video(
         print(f"ERROR: Could not create video writer for {output_path}")
         return False
 
-    # "Vehicles" — each is a colored rectangle that moves across the frame
+    # "Vehicles" - each is a colored rectangle that moves across the frame
     vehicles = [
         {
             "color": (0, 0, 200),       # Red (BGR)

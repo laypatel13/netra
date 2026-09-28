@@ -1,4 +1,4 @@
-# Netra — System Architecture
+# Netra - System Architecture
 
 Netra is designed as a unified CCTV registry (Model 1) and viewing/analytics platform (Model 2) for the state of Gujarat. A critical requirement of Model 2 is that **existing departmental Video Management Systems (VMS) remain completely unaffected**.
 
@@ -59,12 +59,12 @@ The backend (`routers/feeds.py`) acts as a secure proxy. When an operator in the
 * **Why it's safe:** The stream is only pulled *on demand* when an operator is actively watching. If no one is watching, zero bandwidth is used. The departmental VMS simply sees Netra as another authorized viewing client.
 
 ### 2. Edge Analytics Pipeline
-The ANPR pipeline (`anpr/pipeline.py`) runs close to the cameras (at the edge). It consumes the live RTSP stream, runs YOLOv8 for vehicle/color detection, and LPRNet for license plate recognition.
+The ANPR pipeline (`anpr/pipeline.py`) runs close to the cameras (at the edge). It consumes the live RTSP stream, runs YOLOv8 for vehicle detection, OpenCV for colour, and EasyOCR for plate recognition.
 * **Why it's safe:** The massive raw video data never leaves the edge location. Only kilobytes of data (the license plate string, color, and a cropped JPEG thumbnail) are POSTed to the central API.
 
 ### 3. Centralised Registry & Dashboard (Model 1)
 The PostgreSQL database holds the metadata (camera locations, departments, health status) and the detection events. The React frontend (`pages/Registry.jsx` and `pages/Investigation.jsx`) allows operators to view GIS maps, trace vehicle routes, and monitor watchlist alerts.
-* **Why it's safe:** The registry is entirely detached from the video feed layer. It can map 100,000 cameras without requiring a single byte of video data.
+* **Why it's safe:** The registry is entirely detached from the video feed layer. It scales with camera count, not video volume: mapping the state's ~80,000 cameras needs no video data at all.
 
 ## Technology Stack
 
@@ -72,4 +72,4 @@ The PostgreSQL database holds the metadata (camera locations, departments, healt
 * **Backend API:** FastAPI (Python), SQLAlchemy
 * **Database:** PostgreSQL (with PostGIS for geographic queries)
 * **Video Proxy:** HLS.js, HTTP/RTSP Session management
-* **AI/ML Pipeline:** YOLOv8 (Vehicle Detection), LPRNet (Plate Recognition), OpenCV
+* **AI/ML Pipeline:** YOLOv8 (vehicle detection + ByteTrack tracking), EasyOCR (plate recognition), OpenCV

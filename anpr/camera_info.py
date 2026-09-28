@@ -8,9 +8,9 @@ Camera sources can be:
   - Live CCTV streams (RTSP/HLS/MP4 from the Sentinel catalogue)
   - Local video files (for testing)
 
-Timestamp Semantics (Phase 1 documentation):
+Timestamp semantics:
     1. Source PTS (pts_ms):
-       From cv2.CAP_PROP_POS_MSEC — relative to stream/file start.
+       From cv2.CAP_PROP_POS_MSEC - relative to stream/file start.
        NOT comparable across cameras. Each camera/stream has its own
        PTS epoch (typically when the RTSP connection started, or file
        byte 0). Do NOT use for cross-camera chronology.
@@ -18,7 +18,7 @@ Timestamp Semantics (Phase 1 documentation):
     2. Ingestion timestamp (ingested_at):
        System wall-clock (time.time()) when the frame was grabbed from
        the capture device. Comparable across cameras on the same machine.
-       Use for cross-camera ordering in Phase 1.
+       Use for cross-camera ordering.
 
     3. Processing timestamp (processed_at):
        System wall-clock when the frame completed detector inference.
@@ -138,7 +138,7 @@ class CameraInfo:
         Convert back to the raw dict format expected by existing
         open_capture() / CameraWorker code during the transition period.
 
-        This allows incremental adoption — new code uses CameraInfo,
+        This allows incremental adoption - new code uses CameraInfo,
         old code can still receive the dict it expects.
         """
         d = {

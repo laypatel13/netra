@@ -11,7 +11,6 @@ import {
   Video,
   X,
   Crosshair,
-  Database,
 } from "lucide-react";
 import NetraLogo from "./NetraLogo.jsx";
 import ThemeToggle from "./ui/ThemeToggle.jsx";
@@ -23,8 +22,8 @@ const NAV = [
   { to: "/app/registry", label: "Registry & GIS", icon: MapIcon, model: "1" },
   { to: "/app/live", label: "Live viewer", icon: Video, model: "2" },
   { to: "/app/gap-analysis", label: "Gap analysis", icon: BarChart3, model: "1" },
+  { to: "/app/watchlist", label: "Watchlist", icon: ShieldAlert, model: "2" },
   { to: "/app/investigation", label: "Investigation", icon: Crosshair, model: "2" },
-  { to: "/app/dataset-health", label: "Dataset Health", icon: Database, model: "1" },
 ];
 
 const ALERT_POLL_MS = 10000;

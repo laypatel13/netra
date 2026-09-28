@@ -1,14 +1,14 @@
 """
 In-memory multi-frame evidence buffer for tracked vehicles.
 
-Each camera thread maintains its own set of TrackBuffers — one per active
+Each camera thread maintains its own set of TrackBuffers - one per active
 track ID.  Observations are collected as the vehicle moves through the frame,
 and the best K frames are selected when the track expires or reaches a
 processing threshold.
 
 Memory management: each buffer is capped at MAX_TRACK_FRAMES observations.
 Old observations are dropped (FIFO) when the cap is reached.  Buffers are
-discarded entirely once a track is processed or expires — no permanent storage
+discarded entirely once a track is processed or expires - no permanent storage
 of every captured frame.  Only the selected evidence frames are persisted.
 """
 import time
@@ -57,7 +57,7 @@ class Observation:
     pts_ms: float
     bbox: tuple[int, int, int, int]     # (x1, y1, x2, y2)
     confidence: float
-    crop: np.ndarray                    # raw BGR crop — kept in memory only
+    crop: np.ndarray                    # raw BGR crop - kept in memory only
     quality: QualityMetrics
     vehicle_type: str
     vehicle_color: Optional[str] = None
@@ -70,15 +70,16 @@ class TrackBuffer:
     """
     Collects observations for a single tracked vehicle on a single camera.
 
-    Thread-safe only within its own camera thread — no cross-thread sharing
+    Thread-safe only within its own camera thread - no cross-thread sharing
     needed since each camera thread has its own buffer set.
     """
     camera_id: str
     track_id: int
     observations: deque = field(default_factory=lambda: deque(maxlen=MAX_TRACK_FRAMES))
-    # Wall-clock timestamps are retained only to record when this local
-    # processing session observed a track (FRAME_CLOCK provenance).  They are
-    # never used for vehicle motion or cross-camera timing.
+    # Wall-clock time the track was first/last seen. Sandbox feeds are served
+    # on a common live timeline, so this is the clock that is comparable
+    # across cameras (per-stream PTS is not); last_seen_at becomes the
+    # observation's observed_at for cross-camera route linking.
     created_at: float = field(default_factory=time.time)
     last_seen_at: float = field(default_factory=time.time)
     # Monotonic time is deliberately separate from evidence timestamps.  It is
@@ -139,7 +140,6 @@ class TrackBuffer:
             reasons = [o.color_unknown_reason for o in self.observations if o.color_unknown_reason]
             dominant_reason = None
             if reasons:
-                from collections import Counter
                 dominant_reason = Counter(reasons).most_common(1)[0][0]
             return ColorConsensus("unknown", 0.0, usable_observations, unknown_observations, 0.0, temporal_span, ConsensusState.UNKNOWN, dominant_reason)
             
@@ -176,13 +176,13 @@ def select_best_frames(
 
     Strategy:
     1. Sort all observations by quality (descending)
-    2. Greedily select frames while enforcing temporal diversity —
+    2. Greedily select frames while enforcing temporal diversity -
        reject a frame if it's within `temporal_gap` frame indices
        of an already-selected frame
 
     This avoids selecting almost-identical consecutive frames (e.g.
     frames 201, 202, 203) when temporally diverse frames (e.g.
-    201, 208, 216) have similar quality — the diverse set gives the
+    201, 208, 216) have similar quality - the diverse set gives the
     OCR consensus more independent observations.
     """
     if not buffer.observations:

@@ -3,7 +3,7 @@ Motion-gated frame filtering for NETRA pipeline.
 
 Uses OpenCV's MOG2 background subtractor to cheaply determine whether a
 frame contains any significant motion before running expensive YOLO
-inference.  Operates entirely on CPU — zero GPU usage.
+inference.  Operates entirely on CPU - zero GPU usage.
 
 The gate runs on a downscaled grayscale copy of the frame (¼ resolution)
 for speed.  When motion is detected, it returns bounding rectangles of
@@ -33,8 +33,7 @@ Usage:
         detections = detector.detect_rois(frame, result.motion_rois)
 """
 import logging
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -124,7 +123,7 @@ class MotionGate:
     model adapts over time, so fixed cameras will learn their static
     background (parked cars, road markings) and only trigger on new motion.
 
-    Thread-safety: NOT thread-safe — each camera thread owns its own instance.
+    Thread-safety: NOT thread-safe - each camera thread owns its own instance.
     """
 
     def __init__(
@@ -221,7 +220,7 @@ class MotionGate:
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, self._morph_kernel)
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, self._morph_kernel)
 
-        # Threshold — MOG2 may produce grayscale values for shadows
+        # Threshold - MOG2 may produce grayscale values for shadows
         _, fg_mask = cv2.threshold(fg_mask, 200, 255, cv2.THRESH_BINARY)
 
         # Calculate motion fraction
@@ -374,7 +373,7 @@ class MotionGate:
         )
 
     def reset(self):
-        """Reset the motion gate — call after camera reconnect or scene cut."""
+        """Reset the motion gate - call after camera reconnect or scene cut."""
         self._frame_count = 0
         self._bg_subtractor = cv2.createBackgroundSubtractorMOG2(
             history=MOG2_HISTORY,

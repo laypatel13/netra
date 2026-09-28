@@ -104,31 +104,38 @@ The old top-level URLs (`/registry`, `/live`, `/gap-analysis`, `/watchlist`) sti
 
 If any of these don't match what's described, that's a real regression worth flagging - not expected behavior.
 
-## 7. Investigation Pipeline (Phase 2)
+## 7. Investigation mode
 
-The investigation system is a complete multi-camera vehicle tracking workstation.
+Needs the backend, the frontend, and the pipeline in investigation mode (see `README.md` "Investigation mode" for how it works):
 
-### Quick start
+```bash
+cd anpr
+python pipeline.py --camera-ids cam01,cam02,cam04 --investigation   # live sandbox feeds
+python pipeline.py --video sample.mp4 --investigation                # local file
+```
 
-1. Start the backend: cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-2. Start the frontend: cd frontend && npm run dev
-3. Start the pipeline: cd anpr && python pipeline.py --investigation (live CCTV)
-   Or for video testing: python pipeline.py --video sample.mp4 --investigation
+Cross-camera routes only link cameras that have a location in the registry, so seed `test/seed_data/cameras_seed.csv` first (section 4).
 
-### UI walkthrough
+Click-through on `/app/investigation`:
 
-1. Investigation page (/app/investigation) - the main workstation
-2. Create a target - fill in plate number, vehicle type, or color. Hit Create.
-3. Watch candidates arrive - pipeline syncs targets every 10s, sends evidence as vehicles are detected.
-4. Click a candidate - see evidence frames, OCR results, quality scores, score breakdown.
-5. Verify or reject - green checkmark or red X on a candidate.
-6. Pause/Resume - pause button next to a target to temporarily stop tracking.
-7. Delete - X button to delete target and optionally clear evidence.
+1. Create a target with a plate, a vehicle type, or a colour.
+2. Within about 10s the pipeline picks it up; candidates appear under "Unreviewed Candidates" as matching vehicles pass.
+3. Click a candidate to see its evidence frames (raw and enhanced), OCR reads, and score breakdown.
+4. Verify or reject it. A rejection must also invalidate any route chain that used it.
+5. Once the target is seen on two or more cameras, "Historical Route Reconstruction" shows one chain in time order, with registry names, not raw camera ids.
+6. Pause/resume and discard (with or without deleting evidence) from the target list.
 
-### Test suites
+## 8. Automated tests
 
-    cd test
-    python -m pytest test_investigation.py test_investigation_state.py test_cross_camera.py test_route_engine.py test_prediction.py -v
+The pure unit tests (OCR consensus, motion gate, quality, linking, scoring) run anywhere. The database tests empty every table between tests, so they only run against a throwaway PostGIS named in `NETRA_TEST_DATABASE_URL`, never the dev database:
 
-    cd anpr
-    python -m pytest test_evidence_engine.py test_pipeline.py test_vision_semantics.py -v
+```bash
+docker run -d --rm --name netra-testdb -p 55433:5432 \
+  -e POSTGRES_USER=netra -e POSTGRES_PASSWORD=netra -e POSTGRES_DB=netra_test postgis/postgis:16-3.4
+
+cd backend
+NETRA_TEST_DATABASE_URL=postgresql://netra:netra@localhost:55433/netra_test pytest ../test
+
+cd ../anpr
+pytest test_evidence_engine.py test_vision_semantics.py test_pipeline.py
+```

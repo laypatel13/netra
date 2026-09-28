@@ -57,6 +57,39 @@ def _get_cctv_credentials() -> tuple[str, str]:
     return email, password
 
 
+# Netscape-format cookie jar exported from a browser, at the repo root (gitignored).
+_COOKIE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "cookie.txt")
+
+
+def _load_browser_cookie(session: requests.Session, host: str) -> bool:
+    """Attach the sandbox's `sentinel` session cookie from CCTV_COOKIE or
+    cookie.txt. Returns False when neither is available."""
+    env_cookie = os.getenv("CCTV_COOKIE", "").strip()
+    if env_cookie:
+        session.cookies.set("sentinel", env_cookie, domain=host)
+        logger.info("Using sentinel cookie from CCTV_COOKIE")
+        return True
+
+    if not os.path.exists(_COOKIE_FILE):
+        return False
+    try:
+        with open(_COOKIE_FILE) as f:
+            for line in f:
+                # Browsers export HttpOnly cookies as "#HttpOnly_<domain>\t..."; other "#" lines are comments.
+                if line.startswith("#HttpOnly_"):
+                    line = line[len("#HttpOnly_"):]
+                elif line.startswith("#"):
+                    continue
+                parts = line.strip().split("\t")
+                if len(parts) >= 7 and parts[5] == "sentinel":
+                    session.cookies.set("sentinel", parts[6], domain=host)
+                    logger.info("Using sentinel cookie from cookie.txt")
+                    return True
+    except OSError as e:
+        logger.warning("Could not read cookie.txt: %s", e)
+    return False
+
+
 def _get_cctv_session() -> requests.Session:
     """
     Authenticate with cctv.corp8.cloud and return a session with the
@@ -76,27 +109,28 @@ def _get_cctv_session() -> requests.Session:
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
-        
-        # Load the session cookie from cookie.txt instead of logging in, to bypass Cloudflare
-        cookie_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "cookie.txt")
-        env_cookie = os.getenv("CCTV_COOKIE", "").strip()
-        if env_cookie:
-            session.cookies.set("sentinel", env_cookie, domain=host)
-            logger.info("Loaded sentinel cookie from CCTV_COOKIE env var")
-        elif os.path.exists(cookie_path):
+
+        # Cloudflare in front of the sandbox now challenges scripted logins,
+        # so a session cookie copied from a real browser login takes priority.
+        # Without one, fall back to the form login.
+        if not _load_browser_cookie(session, host):
+            login_url = f"https://{host}/auth/login"
             try:
-                with open(cookie_path, "r") as f:
-                    for line in f:
-                        if "sentinel" in line and (not line.startswith("#") or line.startswith("#HttpOnly_")):
-                            clean_line = line.replace("#HttpOnly_", "") if line.startswith("#HttpOnly_") else line
-                            parts = clean_line.strip().split("\t")
-                            if len(parts) >= 7:
-                                session.cookies.set(parts[5], parts[6], domain=host)
-                                logger.info("Loaded sentinel cookie from cookie.txt")
-            except Exception as e:
-                logger.warning(f"Could not load cookie.txt: {e}")
-        else:
-            logger.warning("No CCTV_COOKIE in .env and cookie.txt not found! Auth may fail.")
+                resp = session.post(
+                    login_url,
+                    data={"email": email, "password": password},
+                    timeout=15,
+                    allow_redirects=True,
+                )
+            except requests.RequestException as e:
+                raise HTTPException(status_code=502, detail=f"Could not reach {login_url}: {e}")
+            # The login page redirects on success. Check we got a valid session.
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"CCTV login failed (HTTP {resp.status_code}). Check CCTV_EMAIL/CCTV_PASSWORD, or set CCTV_COOKIE.",
+                )
+            logger.info("Authenticated with %s as %s", host, email)
 
         _cctv_session = session
         _session_ts = now
@@ -115,7 +149,7 @@ def _get_rtsp_auth_prefix() -> str:
 
 # --- Catalogue cache ---
 _catalogue_cache: dict[str, dict] = {}
-_cache_ttl_seconds = 86400
+_cache_ttl_seconds = 60
 
 
 def _get_disk_cache_path(host: str) -> str:
@@ -387,11 +421,11 @@ def hls_proxy(camera_id: str, path: str):
         resp = session.get(upstream_url, timeout=60, stream=True)
         resp.raise_for_status()
     except requests.RequestException as e:
-        error_body = ""
-        if hasattr(e, 'response') and e.response is not None:
-            error_body = e.response.text
-        logger.warning("HLS proxy failed for %s: %s - Body: %s", upstream_url, e, error_body[:200])
-        raise HTTPException(status_code=502, detail=f"Could not fetch {upstream_url}: {e} - Body: {error_body[:200]}")
+        # Upstream error bodies (often a Cloudflare challenge page) go to the
+        # log for debugging, not back to the browser.
+        body = e.response.text[:200] if getattr(e, "response", None) is not None else ""
+        logger.warning("HLS proxy failed for %s: %s %s", upstream_url, e, body)
+        raise HTTPException(status_code=502, detail=f"Could not fetch {upstream_url}: {e}")
 
     content_type = resp.headers.get("content-type", "application/octet-stream")
 

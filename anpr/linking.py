@@ -1,19 +1,18 @@
 """
 Cross-Camera Observation Linking Engine.
 
-Responsible for comparing two VehicleObservations across a CameraGraphEdge to 
-determine if they could represent the same vehicle.
+Compares two VehicleObservations from different cameras to decide whether
+they could be the same vehicle.
 
 Principles:
 1. UNKNOWN is NOT MATCH.
 2. Missing evidence is different from contradictory evidence.
 3. Do NOT hide contradictions.
-4. Temporal feasibility is strict based on edge constraints.
+4. Temporal feasibility is strict: the gap must fit the travel-time bounds.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
-from datetime import datetime
 
 # Import models
 import sys
@@ -21,7 +20,6 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 from app.models import (
     VehicleObservation,
-    CameraGraphEdge,
     TimestampQuality,
     TimestampSource,
 )
@@ -32,8 +30,8 @@ from target_filter import _compare, _compare_color, _normalize_plate, MatchResul
 
 @dataclass
 class LinkResult:
-    status: str  # possible, weak, conflicting, rejected, unknown
-    temporal_feasibility: str  # valid, impossible, unknown
+    status: str  # possible, weak, conflicting, rejected, unknown (models.MachineAssessment)
+    temporal_feasibility: str  # valid, impossible, unknown, unverified_cross_camera_time
     attribute_comparisons: Dict[str, str]
     evidence_completeness: float
     link_score: float
@@ -41,12 +39,16 @@ class LinkResult:
 
 
 def evaluate_temporal_feasibility(
-    obs_a: VehicleObservation, 
-    obs_b: VehicleObservation, 
-    edge: Optional[CameraGraphEdge]
+    obs_a: VehicleObservation,
+    obs_b: VehicleObservation,
+    travel_bounds: Optional[Tuple[float, float]],
 ) -> str:
     """
     Check if the transition between obs_a and obs_b is temporally feasible.
+
+    ``travel_bounds`` is (min_seconds, max_seconds) between the two cameras,
+    from a configured edge or the cameras' registered locations; None means
+    there is no basis for judging the gap.
 
     Cross-camera time needs a comparable, trustworthy absolute-clock source.
     Local frame clocks and per-stream PTS remain valuable evidence, but cannot
@@ -68,26 +70,27 @@ def evaluate_temporal_feasibility(
         if not getattr(obs_a, 'is_time_synchronized', False) or not getattr(obs_b, 'is_time_synchronized', False):
             return "unverified_cross_camera_time"
         
-    if not edge:
+    if travel_bounds is None:
         return "unknown"
-        
+
+    min_seconds, max_seconds = travel_bounds
     delta_seconds = (obs_b.observed_at - obs_a.observed_at).total_seconds()
-    
-    if delta_seconds < edge.min_travel_time or delta_seconds > edge.max_travel_time:
+
+    if delta_seconds < min_seconds or delta_seconds > max_seconds:
         return "impossible"
         
     return "valid"
 
 
 def compare_observations(
-    obs_a: VehicleObservation, 
-    obs_b: VehicleObservation, 
-    edge: Optional[CameraGraphEdge]
+    obs_a: VehicleObservation,
+    obs_b: VehicleObservation,
+    travel_bounds: Optional[Tuple[float, float]],
 ) -> LinkResult:
     """
     Compare two observations and return a LinkResult.
     """
-    temp_feas = evaluate_temporal_feasibility(obs_a, obs_b, edge)
+    temp_feas = evaluate_temporal_feasibility(obs_a, obs_b, travel_bounds)
     
     if temp_feas == "impossible":
         return LinkResult(
@@ -96,7 +99,7 @@ def compare_observations(
             attribute_comparisons={},
             evidence_completeness=1.0,
             link_score=0.0,
-            explanation="Temporally impossible based on edge constraints."
+            explanation="Temporally impossible: the gap does not fit the travel-time bounds."
         )
         
     # Compare attributes using strict target_filter semantics

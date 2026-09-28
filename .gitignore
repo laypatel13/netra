@@ -5,7 +5,7 @@ __pycache__/
 venv/
 .env
 
-# Downloaded model weights (fetched automatically on first run — see anpr/detector.py)
+# Downloaded model weights (fetched automatically on first run - see anpr/detector.py)
 *.pt
 
 # Runtime-generated detection thumbnails (see backend/app/routers/detections.py)

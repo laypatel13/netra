@@ -233,3 +233,105 @@ class VerificationAction(BaseModel):
     action: Literal["verify", "reject"]
     verifier: str
     review_note: Optional[str] = None
+
+
+class ReviewRequest(BaseModel):
+    """Reviewer decision on a single observation or cross-camera link."""
+    action: Literal["accept", "reject", "reopen", "flag"]
+    reviewer: str
+    review_note: Optional[str] = None
+
+
+class TargetStatusUpdate(BaseModel):
+    status: Literal["active", "paused", "resolved"]
+
+
+# ---- Investigation pipeline ingest (anpr/investigation_pipeline.py) ----
+
+class EvidenceIngest(BaseModel):
+    frame_index: int
+    quality_score: float
+    raw_path: str
+    enhanced_path: Optional[str] = None
+    ocr_candidate: Optional[str] = None
+    ocr_confidence: Optional[float] = None
+    vehicle_type: Optional[VehicleTypeLiteral] = None
+    vehicle_color: Optional[str] = None
+    timestamp: Optional[float] = None
+    source_pts: Optional[float] = None
+    evidence_state: Optional[Literal["match", "approximate", "non_match", "unknown", "conflicting"]] = None
+    unknown_reason: Optional[
+        Literal["not_visible", "not_detected", "extraction_failed", "low_confidence", "insufficient_frames", "unavailable"]
+    ] = None
+    extraction_method: Optional[str] = None
+    is_simulated: bool = False
+
+
+class CandidateIngest(BaseModel):
+    camera_id: str
+    track_id: int
+    target_id: Optional[UUID] = None
+    started_at: float
+    ended_at: float
+    final_score: float
+    tier: str
+    score_breakdown: Dict[str, Any]
+    ocr_consensus: Dict[str, Any]
+    evidence_completeness: Optional[float] = None
+    evidence: List[EvidenceIngest]
+
+
+class ObservationIngest(BaseModel):
+    camera_id: str
+    session_id: str
+    track_id: int
+    candidate_id: Optional[UUID] = None
+    status: Literal["open", "updating", "finalized"]
+    timestamp_source: Literal["source_pts", "frame_clock", "absolute_timestamp", "unknown"]
+    is_simulated: bool = False
+    observed_at: float  # unix seconds, UTC
+    source_pts_start: Optional[float] = None
+    source_pts_end: Optional[float] = None
+    vehicle_type: Optional[VehicleTypeLiteral] = None
+    color: Optional[str] = None
+    color_confidence: Optional[float] = None
+    plate: Optional[str] = None
+    plate_confidence: Optional[float] = None
+    evidence_completeness: Optional[float] = None
+    overall_confidence: Optional[float] = None
+    is_playback_repetition: bool = False
+    is_time_synchronized: bool = False
+    ingested_at: float = 0.0
+
+
+class CameraHealthPayload(BaseModel):
+    """Per-camera health snapshot sent inside the pipeline heartbeat."""
+    camera_id: str
+    status: str = "offline"  # online / offline / reconnecting
+    connection_state: Optional[str] = None  # see anpr/camera_manager.py ConnectionState
+    frames_read: int = 0
+    frames_processed: int = 0
+    frames_dropped: int = 0
+    vehicles_detected: int = 0
+    tracks_active: int = 0
+    matches: int = 0
+    reconnect_count: int = 0
+    last_frame_time: Optional[float] = None
+    last_frame_received: float = 0.0
+    current_error: Optional[str] = None
+    worker_alive: bool = False
+
+
+class HeartbeatPayload(BaseModel):
+    pipeline_id: str = "main"
+    cameras_configured: int = 0
+    cameras_connected: int = 0
+    cameras_active: int = 0
+    vehicles_detected: int = 0
+    tracks_created: int = 0
+    active_targets: int = 0
+    candidates_created: int = 0
+    ocr_attempts: int = 0
+    ocr_success: int = 0
+    api_failures: int = 0
+    per_camera: Optional[List[CameraHealthPayload]] = None
