@@ -32,13 +32,17 @@ _HUE_BUCKETS = [
 ]
 
 
+from typing import Optional
+
 @dataclass
-class ColorReading:
-    name: str
+class ColorObservation:
+    color: str
     confidence: float  # fraction of sampled pixels that agreed with the winning bucket
+    usable: bool
+    unknown_reason: Optional[str] = None
 
 
-def dominant_color(crop) -> ColorReading:
+def dominant_color(crop) -> ColorObservation:
     """
     Given a BGR vehicle crop, return the dominant named color.
 
@@ -48,45 +52,69 @@ def dominant_color(crop) -> ColorReading:
     black/white/gray by low saturation) and return the most common bucket.
     """
     if crop is None or crop.size == 0:
-        return ColorReading(name="unknown", confidence=0.0)
+        return ColorObservation(color="unknown", confidence=0.0, usable=False, unknown_reason="not_visible")
 
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    # Focus extraction on the central region of the bounding box to ignore
+    # road, sky, and shadows.
+    # We explicitly exclude the bottom 25% (road/shadows) and top 25% (sky/background).
+    h, w = crop.shape[:2]
+    y1, y2 = int(h * 0.25), int(h * 0.75)
+    x1, x2 = int(w * 0.25), int(w * 0.75)
+    center_crop = crop[y1:y2, x1:x2]
+    if center_crop.size == 0:
+        center_crop = crop
+
+    # Downsample heavily to speed up processing (O(1) relative to original size)
+    # and blur out specular highlights / noise naturally.
+    thumbnail = cv2.resize(center_crop, (32, 32), interpolation=cv2.INTER_AREA)
+
+    hsv = cv2.cvtColor(thumbnail, cv2.COLOR_BGR2HSV)
     h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
 
     # Keep only pixels with real color information - not blown-out glare,
     # not near-black shadow.
     valid = (v > 40) & (v < 240)
     if not np.any(valid):
-        return ColorReading(name="unknown", confidence=0.0)
+        return ColorObservation(color="unknown", confidence=0.0, usable=False, unknown_reason="extraction_failed")
 
     h, s, v = h[valid], s[valid], v[valid]
     total = h.size
 
-    # Achromatic first: low saturation means white/gray/black regardless of hue.
     achromatic = s < 40
-    if np.count_nonzero(achromatic) / total > 0.6:
+    chromatic_mask = ~achromatic
+    
+    # Priority 1: Chromatic
+    # If a significant portion of the valid pixels are chromatic, the car is likely colored.
+    # Even 15% of chromatic pixels is usually enough to define a car's color, 
+    # since windshields, grilles, and glare take up most of the surface area.
+    chromatic_fraction = np.count_nonzero(chromatic_mask) / total
+    
+    if chromatic_fraction > 0.15:
+        h_chromatic = h[chromatic_mask]
+        best_name, best_count = "unknown", 0
+        for name, ranges in _HUE_BUCKETS:
+            mask = np.zeros(h_chromatic.shape, dtype=bool)
+            for lo, hi in ranges:
+                mask |= (h_chromatic >= lo) & (h_chromatic < hi)
+            count = int(np.count_nonzero(mask))
+            if count > best_count:
+                best_name, best_count = name, count
+                
+        # To be confident, the winning hue bucket must represent a noticeable part of the car
+        confidence = best_count / total
+        if confidence > 0.10: 
+            return ColorObservation(color=best_name, confidence=confidence, usable=True)
+
+    # Priority 2: Achromatic (Fallback)
+    # If we didn't find a strong color, assume the car is white/black/silver
+    if np.count_nonzero(achromatic) / total > 0.5:
         v_achromatic = v[achromatic]
         bright = np.count_nonzero(v_achromatic > 170) / v_achromatic.size
         dark = np.count_nonzero(v_achromatic < 90) / v_achromatic.size
         if bright > 0.5:
-            return ColorReading(name="white", confidence=float(bright))
+            return ColorObservation(color="white", confidence=float(bright), usable=True)
         if dark > 0.5:
-            return ColorReading(name="black", confidence=float(dark))
-        return ColorReading(name="silver_gray", confidence=float(np.count_nonzero(achromatic) / total))
+            return ColorObservation(color="black", confidence=float(dark), usable=True)
+        return ColorObservation(color="silver_gray", confidence=float(np.count_nonzero(achromatic) / total), usable=True)
 
-    # Chromatic: bucket the saturated pixels by hue.
-    chromatic_mask = ~achromatic
-    h_chromatic = h[chromatic_mask]
-    if h_chromatic.size == 0:
-        return ColorReading(name="unknown", confidence=0.0)
-
-    best_name, best_count = "unknown", 0
-    for name, ranges in _HUE_BUCKETS:
-        mask = np.zeros(h_chromatic.shape, dtype=bool)
-        for lo, hi in ranges:
-            mask |= (h_chromatic >= lo) & (h_chromatic < hi)
-        count = int(np.count_nonzero(mask))
-        if count > best_count:
-            best_name, best_count = name, count
-
-    return ColorReading(name=best_name, confidence=best_count / h_chromatic.size if h_chromatic.size else 0.0)
+    return ColorObservation(color="unknown", confidence=0.0, usable=False, unknown_reason="low_confidence")

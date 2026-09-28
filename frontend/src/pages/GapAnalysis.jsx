@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Building2, Download, Percent, Camera, CircleSlash } from "lucide-react";
+import { Building2, Download, Percent, Camera, CircleSlash, RefreshCw } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import { Card, CardBody, CardHeader, SectionHeading } from "../components/ui/Card.jsx";
 import Stat, { Meter } from "../components/ui/Stat.jsx";
@@ -18,6 +18,8 @@ export default function GapAnalysis() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -27,6 +29,24 @@ export default function GapAnalysis() {
       .catch(setError)
       .finally(() => setLoading(false));
   }, []);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await api("/cameras/sync-status", {
+        method: "POST",
+        headers: { "X-Role": "admin" },
+      });
+      setSyncMessage(`Updated ${res.cameras_updated}, skipped ${res.cameras_skipped_no_live_field}`);
+      load();
+    } catch (err) {
+      console.error(err);
+      setSyncMessage("Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   useEffect(load, [load]);
 
@@ -68,12 +88,19 @@ export default function GapAnalysis() {
         title="Gap analysis"
         description="Per-department coverage across the registry, plus the departments and cameras the network still can't see."
         actions={
-          <div className="flex items-center gap-2">
-            <Badge tone="brand">Model 1</Badge>
-            <Button size="sm" variant="secondary" onClick={exportJson}>
-              <Download className="h-4 w-4" aria-hidden="true" />
-              Export JSON
-            </Button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              {syncMessage && <span className="text-2xs font-medium text-ink-3">{syncMessage}</span>}
+              <Badge tone="brand">Model 1</Badge>
+              <Button size="sm" variant="secondary" onClick={handleSync} loading={syncing}>
+                {!syncing && <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+                Sync Health
+              </Button>
+              <Button size="sm" variant="secondary" onClick={exportJson}>
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Export JSON
+              </Button>
+            </div>
           </div>
         }
       />

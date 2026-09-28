@@ -76,27 +76,27 @@ def _get_cctv_session() -> requests.Session:
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
-        login_url = f"https://{host}/auth/login"
-
-        try:
-            resp = session.post(
-                login_url,
-                data={"email": email, "password": password},
-                timeout=15,
-                allow_redirects=True,
-            )
-            # The login page redirects on success. Check we got a valid session.
-            if resp.status_code >= 400:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"CCTV login failed (HTTP {resp.status_code}). Check CCTV_EMAIL/CCTV_PASSWORD.",
-                )
-            logger.info("Authenticated with %s as %s", host, email)
-        except requests.RequestException as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Could not reach {login_url}: {e}",
-            )
+        
+        # Load the session cookie from cookie.txt instead of logging in, to bypass Cloudflare
+        cookie_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "cookie.txt")
+        env_cookie = os.getenv("CCTV_COOKIE", "").strip()
+        if env_cookie:
+            session.cookies.set("sentinel", env_cookie, domain=host)
+            logger.info("Loaded sentinel cookie from CCTV_COOKIE env var")
+        elif os.path.exists(cookie_path):
+            try:
+                with open(cookie_path, "r") as f:
+                    for line in f:
+                        if "sentinel" in line and (not line.startswith("#") or line.startswith("#HttpOnly_")):
+                            clean_line = line.replace("#HttpOnly_", "") if line.startswith("#HttpOnly_") else line
+                            parts = clean_line.strip().split("\t")
+                            if len(parts) >= 7:
+                                session.cookies.set(parts[5], parts[6], domain=host)
+                                logger.info("Loaded sentinel cookie from cookie.txt")
+            except Exception as e:
+                logger.warning(f"Could not load cookie.txt: {e}")
+        else:
+            logger.warning("No CCTV_COOKIE in .env and cookie.txt not found! Auth may fail.")
 
         _cctv_session = session
         _session_ts = now
@@ -115,7 +115,7 @@ def _get_rtsp_auth_prefix() -> str:
 
 # --- Catalogue cache ---
 _catalogue_cache: dict[str, dict] = {}
-_cache_ttl_seconds = 60
+_cache_ttl_seconds = 86400
 
 
 def _get_disk_cache_path(host: str) -> str:
@@ -158,7 +158,7 @@ def _fetch_catalogue(host: str) -> list[dict]:
         session = _get_cctv_session()
         url = f"https://{host}/cameras.json"
         try:
-            resp = session.get(url, timeout=15)
+            resp = session.get(url, timeout=60)
             resp.raise_for_status()
             data = resp.json()
             # cameras.json returns a flat array of camera objects
@@ -384,11 +384,14 @@ def hls_proxy(camera_id: str, path: str):
         upstream_url = f"https://{cctv_host}/{camera_id}/{path}"
 
     try:
-        resp = session.get(upstream_url, timeout=15, stream=True)
+        resp = session.get(upstream_url, timeout=60, stream=True)
         resp.raise_for_status()
     except requests.RequestException as e:
-        logger.warning("HLS proxy failed for %s: %s", upstream_url, e)
-        raise HTTPException(status_code=502, detail=f"Could not fetch {upstream_url}: {e}")
+        error_body = ""
+        if hasattr(e, 'response') and e.response is not None:
+            error_body = e.response.text
+        logger.warning("HLS proxy failed for %s: %s - Body: %s", upstream_url, e, error_body[:200])
+        raise HTTPException(status_code=502, detail=f"Could not fetch {upstream_url}: {e} - Body: {error_body[:200]}")
 
     content_type = resp.headers.get("content-type", "application/octet-stream")
 

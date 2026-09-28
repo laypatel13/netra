@@ -20,7 +20,7 @@ This document is the single source of truth for context, architecture, endpoints
 | Area | Status |
 |---|---|
 | Backend skeleton (FastAPI + SQLAlchemy + GeoAlchemy2) | Done |
-| Database: Supabase (primary) + local Docker Postgres/PostGIS (dev fallback) | Wired - `DATABASE_URL` env var switches between them, `Base.metadata.create_all()` auto-creates schema on either. Not yet pointed at a live Supabase project - see Section 5a. |
+| Database: Supabase (primary) + local Docker Postgres/PostGIS (dev fallback) | Wired for a **fresh** schema through `DATABASE_URL`. Existing databases require an explicit migration/reset; `create_all()` does not alter existing tables. See Section 5a. |
 | Camera registry (manual / bulk JSON / bulk CSV onboarding, RBAC, audit log) | Done |
 | GIS map (Leaflet, department/status filters) | Done, **plus route-on-map** (polyline + numbered stop markers with thumbnails) |
 | Gap-analysis report (per-department coverage, stale cameras, missing depts) | Done, has its own page (`/gap-analysis`) and a summary strip on the Dashboard |
@@ -224,7 +224,7 @@ These match the officially suggested stacks for Models 1 and 2 - not mandatory, 
 Why Supabase is the right call here, specifically for a 6-day hackathon finish:
 - **You need a URL to submit anyway** (hosted platform URL is an optional-but-valuable submission item, and the government-feed live demo needs *something* reachable). Supabase gives you a managed, always-on Postgres without standing up your own server just for the database.
 - **PostGIS is a checkbox, not a chore** - Supabase ships PostGIS as an enablable extension (`CREATE EXTENSION IF NOT EXISTS postgis;` in the SQL Editor, already documented in `database.py`'s docstring), so nothing about the `Geography` columns in `models.py` needs to change.
-- **Schema creation is already automatic** - `main.py` calls `Base.metadata.create_all(bind=engine)` on startup, so pointing `DATABASE_URL` at a fresh Supabase project and starting the backend once is the entire migration step. No Alembic, no manual SQL needed for first setup.
+- **Fresh schema creation is automatic; migrations are not.** `main.py` calls `Base.metadata.create_all(bind=engine)`, so pointing `DATABASE_URL` at a fresh Supabase project and starting the backend once creates the initial schema. It does **not** add columns, constraints, or enum values to an already-populated database. Until a versioned migration system is added, make a backup and use an explicit migration/reset procedure before deploying model changes.
 - **Free tier is enough for this scale** - a few thousand detection rows and 30 cameras is trivial for Supabase's free-tier Postgres.
 
 Caveats to actually watch for before the live demo:
@@ -373,3 +373,37 @@ Must address, in the HLD/PPT:
 - Demo recordings are a graded submission item, not an afterthought - budget dedicated time for them (see `TIMELINE.md`), don't cram them into the integration-test day.
 
 See `TIMELINE.md` for the day-by-day execution schedule.
+
+
+---
+
+## 14. Phase 2 - Investigation Pipeline Architecture (Sep 15-22)
+
+Built for the Phase 2 Production Demo (Sep 22-23). Extends Model 2 with a full multi-camera investigation system.
+
+### 0h. Investigation Pipeline - what was built
+
+| Component | File(s) | Status |
+|---|---|---|
+| Multi-camera orchestrator | anpr/multi_camera.py | Done - shared inference queue, per-camera workers |
+| Investigation pipeline | anpr/investigation_pipeline.py | Done - evidence buffering, scoring, target matching |
+| Evidence buffer | anpr/evidence_buffer.py | Done - TrackBuffer, Observation, frame selection |
+| Evidence scoring | anpr/scoring.py | Done - evidence fusion, match tier classification |
+| Target filter | anpr/target_filter.py | Done - 3-valued logic matching |
+| OCR consensus | anpr/ocr_consensus.py | Done - multi-frame plate consensus |
+| Motion gate | anpr/motion_gate.py | Done - MOG2-based frame skipping |
+| Camera manager | anpr/camera_manager.py | Done - connection state machine, backoff |
+| Investigation service | backend/app/investigation_service.py | Done - route-chain construction |
+| Prediction service | backend/app/prediction_service.py | Done - transition dataset readiness |
+| Route engine | backend/app/route_engine.py | Done - camera graph traversal |
+| Investigation UI | frontend/src/pages/Investigation.jsx | Done - full workstation |
+
+### Data model additions (Phase 2)
+
+New models in backend/app/models.py: InvestigationTarget, VehicleTrack, TrackEvidence, VehicleObservation, RecordingSession, CameraGraphEdge, CrossCameraLinkCandidate, RouteChain, RouteChainObservation, RouteChainLink, InvestigationState, EvidenceReview, GraphVersion, PipelineHeartbeat, InvestigationEvent, CameraTransitionRecord.
+
+### Running the investigation pipeline
+
+    # Multi-camera (live CCTV):  python pipeline.py --investigation
+    # Video testing:             python pipeline.py --video sample.mp4 --investigation
+    # With debug counters:       python pipeline.py --investigation --investigation-debug
